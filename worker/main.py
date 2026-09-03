@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import shutil
 import tempfile
+import threading
 import time
 import traceback
 from pathlib import Path
@@ -21,6 +22,7 @@ import diarize
 import embed as embed_mod
 import detect
 import store
+import sync
 
 AUDIO_EXT = {".m4a", ".mp3", ".wav", ".ogg", ".oga", ".opus", ".webm", ".flac", ".mp4", ".mov"}
 POLL_SEC = 10
@@ -127,7 +129,11 @@ def stage_quality(rec_id: int, src: Path, smap: dict) -> list:
         utts, cost_total = [], 0.0
         for ri, (rs, re_) in enumerate(smap["regions"]):
             pos = rs
-            while pos < re_:
+            # Хвост короче минимума пропускаем. Сложение pos += take накапливает
+            # погрешность, и без этого порога цикл заходил на лишний виток, вырезая
+            # кусок в доли миллисекунды: ffmpeg отдавал огрызок, а Scribe отвечал
+            # «File is corrupted» — на записи #13 из-за этого падал весь этап.
+            while re_ - pos >= config.QUALITY_MIN_CHUNK_SEC:
                 take = min(config.QUALITY_CHUNK_SEC, re_ - pos)
                 tmp = config.IN_PROGRESS / f"q_{rec_id}_{ri}_{int(pos)}{src.suffix}"
                 audio_mod.cut(src, pos, take, tmp)
@@ -189,94 +195,138 @@ def load_artifact(rec_id: int, name: str) -> dict | None:
         return None
 
 
-def process(rec) -> None:
+# Конвейер: запись движется по статусам, на каждом этапе её подхватывает
+# свой пул. Ждущие статусы (справа) — очередь соответствующего этапа.
+#   pending_download -> downloading -> new -> detecting -> detected
+#   -> transcribing  -> transcribed -> resolving -> done
+# Данные между этапами не передаются в памяти — только через артефакты на диске,
+# поэтому этапы независимы, могут идти в разном темпе и переживают рестарт.
+STAGES = {
+    "detect":  {"wait": "new",         "busy": "detecting",  "next": "detected"},
+    "quality": {"wait": "detected",    "busy": "transcribing", "next": "transcribed"},
+    "resolve": {"wait": "transcribed", "busy": "resolving",  "next": "done"},
+}
+# Ждущий статус для записи, у которой этап переигрывают вручную из UI
+REPROCESS_STATUS = {"detect": "new", "quality": "detected", "resolve": "transcribed"}
+
+
+def claim(stage: str):
+    """Атомарно забрать одну запись из очереди этапа (два потока одну не возьмут)."""
+    st = STAGES[stage]
+    return db.q1("""
+        UPDATE recordings SET status=%s
+        WHERE id = (SELECT id FROM recordings WHERE status=%s
+                    ORDER BY coalesce(started_at, created_at) DESC
+                    FOR UPDATE SKIP LOCKED LIMIT 1)
+        RETURNING id, filename, audio_path, duration_sec""", st["busy"], st["wait"])
+
+
+def load_utterances(rec_id: int) -> list:
+    cached = load_artifact(rec_id, "quality")
+    if not cached:
+        raise RuntimeError("нет артефакта quality — этап транскрипции не прошёл")
+    return [diarize.Utterance(
+        start=u["start"], end=u["end"], text=u["text"], raw_speaker=u["raw_speaker"],
+        words=u.get("words") or [], asr_logprob=u.get("asr_logprob"))
+        for u in cached["utterances"]]
+
+
+def run_stage(stage: str, rec) -> None:
+    """Один этап одной записи. Ошибка помечает запись failed, очередь едет дальше."""
     rec_id, filename, audio_path, dur = rec[0], rec[1], Path(rec[2]), float(rec[3] or 0)
-    meta = db.q1("SELECT meta FROM recordings WHERE id=%s", rec_id)[0] or {}
-    if isinstance(meta, str):
-        meta = json.loads(meta)
-    # переигрывание с этапа: артефакты предыдущих этапов уже оплачены и лежат на диске
-    from_stage = meta.get("reprocess_from") or "detect"
-    log(f"=== запись #{rec_id} {filename} ({dur/60:.1f} мин)" +
-        (f" [переигрываем с {from_stage}]" if from_stage != "detect" else ""))
-    db.q("UPDATE recordings SET status='processing', meta = meta - 'reprocess_from' WHERE id=%s", rec_id)
     try:
-        if from_stage in ("quality", "resolve"):
+        if stage == "detect":
+            stage_detect(rec_id, audio_path, dur)
+        elif stage == "quality":
             cached = load_artifact(rec_id, "detect")
             if not cached:
-                raise RuntimeError("нет артефакта detect — переиграть можно только с detect")
-            smap = cached["speech_map"]
+                raise RuntimeError("нет артефакта detect")
+            stage_quality(rec_id, audio_path, cached["speech_map"])
         else:
-            smap = stage_detect(rec_id, audio_path, dur)
-
-        if from_stage == "resolve":
-            cached = load_artifact(rec_id, "quality")
-            if not cached:
-                raise RuntimeError("нет артефакта quality — переиграть можно только с quality")
-            utts = [diarize.Utterance(
-                start=u["start"], end=u["end"], text=u["text"],
-                raw_speaker=u["raw_speaker"], words=u.get("words") or [],
-                asr_logprob=u.get("asr_logprob")) for u in cached["utterances"]]
-            log(f"reuse quality: {len(utts)} реплик из артефакта (без оплаты)")
-        else:
-            utts = stage_quality(rec_id, audio_path, smap)
-        info = stage_resolve(rec_id, audio_path, utts)
-        job = db.job_start(rec_id, "store")
-        md = store.save(rec_id, filename, audio_path, dur, utts, info["clusters"], smap)
-        db.job_done(job, 0.0, str(md))
-        db.q("UPDATE recordings SET status='done' WHERE id=%s", rec_id)
-        log(f"=== готово #{rec_id}: {md}")
+            utts = load_utterances(rec_id)
+            info = stage_resolve(rec_id, audio_path, utts)
+            smap = (load_artifact(rec_id, "detect") or {}).get("speech_map", {})
+            job = db.job_start(rec_id, "store")
+            md = store.save(rec_id, filename, audio_path, dur, utts, info["clusters"], smap)
+            db.job_done(job, 0.0, str(md))
+            log(f"=== готово #{rec_id}: {md}")
+        db.q("UPDATE recordings SET status=%s WHERE id=%s", STAGES[stage]["next"], rec_id)
     except Exception as exc:
         db.q("UPDATE recordings SET status='failed' WHERE id=%s", rec_id)
-        log(f"!!! ошибка #{rec_id}: {exc}")
+        log(f"!!! #{rec_id} на этапе {stage}: {exc}")
+
+
+def stage_loop(stage: str, num: int) -> None:
+    """Обработчик одного этапа: тянет свою очередь, пока она не опустеет."""
+    paid = stage in ("quality", "resolve")
+    while True:
+        try:
+            # бюджет стережём только на платных этапах: детектор бесплатный и
+            # должен продолжать готовить работу, даже когда деньги на сегодня кончились
+            if paid and db.budget_left() <= 0.01:
+                time.sleep(300)
+                continue
+            rec = claim(stage)
+            if rec:
+                run_stage(stage, rec)
+            else:
+                time.sleep(POLL_SEC)
+        except Exception:
+            log(f"{stage}/{num} упал:", traceback.format_exc()[:300])
+            time.sleep(30)
 
 
 def recover_zombies() -> None:
     """После рестарта контейнера незавершённые джобы висят в running навсегда.
 
-    Помечаем их прерванными, а сами записи возвращаем в очередь: этапы, которые
-    уже успели записать артефакт, переигрываться не будут (см. reprocess_from).
+    Помечаем их прерванными, а записи возвращаем в очередь ТОГО этапа, до которого
+    они реально дошли: всё, что уже оплачено и лежит в артефактах, не переигрываем.
     """
-    rows = db.q("""UPDATE jobs SET status='failed', finished_at=now(),
-                   error=COALESCE(error,'') || ' [прервано рестартом воркера]'
-                   WHERE status='running' RETURNING recording_id""") or []
-    if not rows:
-        return
-    for rec_id in sorted({r[0] for r in rows}):
-        # с какого этапа продолжать: всё, что уже оплачено и лежит в артефактах,
-        # переигрывать нельзя — это повторные деньги за ту же работу
+    db.q("""UPDATE jobs SET status='failed', finished_at=now(),
+            error=COALESCE(error,'') || ' [прервано рестартом воркера]'
+            WHERE status='running'""")
+    stuck = db.q("""SELECT id FROM recordings
+                    WHERE status IN ('detecting','transcribing','resolving','processing')""") or []
+    for (rec_id,) in stuck:
         stage = "detect"
         if load_artifact(rec_id, "detect"):
             stage = "quality"
         if load_artifact(rec_id, "quality"):
             stage = "resolve"
-        db.q("""UPDATE recordings
-                SET status='new', meta = meta || jsonb_build_object('reprocess_from', %s::text)
-                WHERE id=%s AND status='processing'""", stage, rec_id)
-        log(f"после рестарта запись #{rec_id} возвращена в очередь с этапа {stage}")
+        db.q("UPDATE recordings SET status=%s WHERE id=%s", REPROCESS_STATUS[stage], rec_id)
+        log(f"после рестарта запись #{rec_id} возвращена в очередь этапа {stage}")
+    # скачивание прервалось на полпути — .part докачивать нечем, начинаем файл заново
+    back = db.q("""UPDATE recordings SET status='pending_download'
+                   WHERE status='downloading' RETURNING id""") or []
+    if back:
+        log(f"возвращено в очередь скачивания после рестарта: {len(back)}")
 
 
 def main() -> None:
     for d in (config.INBOX, config.IN_PROGRESS, config.DONE, config.FAILED,
               config.ARTIFACTS, config.AUDIO):
         d.mkdir(parents=True, exist_ok=True)
+    db.wait_ready(log=log)
     log("воркер запущен, бюджет/день:", config.DAILY_BUDGET_USD)
     recover_zombies()
+    pools = {"detect": config.DETECT_WORKERS, "quality": config.QUALITY_WORKERS,
+             "resolve": config.RESOLVE_WORKERS}
+    for stage, n in pools.items():
+        for i in range(max(1, n)):
+            threading.Thread(target=stage_loop, args=(stage, i + 1), daemon=True).start()
+    if config.PLAUD_SYNC_ENABLED:
+        threading.Thread(target=sync.sync_loop, args=(log,), daemon=True).start()
+        for i in range(max(1, config.DOWNLOAD_WORKERS)):
+            threading.Thread(target=sync.downloader_loop, args=(i + 1, log), daemon=True).start()
+    log("пулы: скачивание %d, детектор %d, транскрипт %d, опознание %d" % (
+        config.DOWNLOAD_WORKERS, config.DETECT_WORKERS,
+        config.QUALITY_WORKERS, config.RESOLVE_WORKERS))
     while True:
         try:
             intake()
-            left = db.budget_left()
-            if left <= 0.01:
-                log(f"бюджет на сегодня исчерпан (потрачено ${db.spent_today():.3f}) — ждём")
-                time.sleep(300)
-                continue
-            rec = db.q1("""SELECT id, filename, audio_path, duration_sec FROM recordings
-                           WHERE status='new' ORDER BY created_at LIMIT 1""")
-            if rec:
-                process(rec)
-            else:
-                time.sleep(POLL_SEC)
+            time.sleep(POLL_SEC)
         except Exception:
-            log("цикл упал:", traceback.format_exc()[:500])
+            log("цикл приёма файлов упал:", traceback.format_exc()[:300])
             time.sleep(30)
 
 

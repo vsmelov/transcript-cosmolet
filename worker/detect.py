@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import threading
 import wave
 from pathlib import Path
 
@@ -28,13 +29,14 @@ SPEECH_LABELS = {
     "Chatter", "Babbling", "Crying, sobbing", "Laughter", "Singing",
 }
 
-_vad = None
-_tagger = None
+# Движки — по экземпляру на поток: обработчиков несколько, а VoiceActivityDetector
+# хранит внутреннее состояние потока аудио. Общий экземпляр означал бы, что reset()
+# одного обработчика ломает разбор у соседнего.
+_local = threading.local()
 
 
 def _vad_engine():
-    global _vad
-    if _vad is None:
+    if getattr(_local, "vad", None) is None:
         import sherpa_onnx
         cfg = sherpa_onnx.VadModelConfig()
         cfg.silero_vad.model = config.VAD_MODEL
@@ -42,19 +44,18 @@ def _vad_engine():
         cfg.silero_vad.min_silence_duration = config.VAD_MIN_SILENCE
         cfg.silero_vad.min_speech_duration = config.VAD_MIN_SPEECH
         cfg.sample_rate = SR
-        _vad = sherpa_onnx.VoiceActivityDetector(cfg, buffer_size_in_seconds=60)
-    return _vad
+        _local.vad = sherpa_onnx.VoiceActivityDetector(cfg, buffer_size_in_seconds=60)
+    return _local.vad
 
 
 def _tag_engine():
-    global _tagger
-    if _tagger is None:
+    if getattr(_local, "tagger", None) is None:
         import sherpa_onnx
-        _tagger = sherpa_onnx.AudioTagging(sherpa_onnx.AudioTaggingConfig(
+        _local.tagger = sherpa_onnx.AudioTagging(sherpa_onnx.AudioTaggingConfig(
             model=sherpa_onnx.AudioTaggingModelConfig(
                 ced=f"{config.TAG_MODEL}/model.int8.onnx", num_threads=2),
             labels=f"{config.TAG_MODEL}/class_labels_indices.csv", top_k=5))
-    return _tagger
+    return _local.tagger
 
 
 def load_wav16k(path: Path) -> np.ndarray:
@@ -70,7 +71,9 @@ def vad_spans(samples: np.ndarray) -> list[list[float]]:
     out: list[list[float]] = []
     win = 512
     for i in range(0, len(samples) - win, win):
-        vad.accept_waveform(samples[i:i + win])
+        # срез memmap/буфера отдаём как непрерывный float32: sherpa-onnx уходит в C++
+        # и на не-contiguous или чужом dtype падает с 'cannot create std::vector'
+        vad.accept_waveform(np.ascontiguousarray(samples[i:i + win], dtype=np.float32))
         while not vad.empty():
             s = vad.front
             out.append([s.start / SR, (s.start + len(s.samples)) / SR])
@@ -90,7 +93,7 @@ def classify(samples: np.ndarray, start: float, end: float) -> tuple[float, list
     if b - a < int(0.4 * SR):
         return 0.0, []
     s = tagger.create_stream()
-    s.accept_waveform(SR, samples[a:b])
+    s.accept_waveform(SR, np.ascontiguousarray(samples[a:b], dtype=np.float32))
     events = tagger.compute(s)
     tags = [{"name": e.name, "prob": round(float(e.prob), 3)} for e in events]
     speech = max((float(e.prob) for e in events if e.name in SPEECH_LABELS), default=0.0)
@@ -104,10 +107,18 @@ def detect(wav_path: Path, total_sec: float) -> dict:
 
     decisions, kept = [], []
     for s, e in spans:
-        speech, tags = classify(samples, s, e)
-        ok = speech >= config.TAG_SPEECH_MIN
+        dur = e - s
+        # Классификатор — самая дорогая часть этапа, поэтому зовём его с умом:
+        #  - совсем короткие всплески (<0.8с) он всё равно не разберёт: доверяем VAD;
+        #  - длинным кускам хватает пробы в начале, гонять целиком незачем.
+        if dur < config.TAG_MIN_DUR:
+            ok, speech, tags = True, None, []
+        else:
+            speech, tags = classify(samples, s, min(e, s + config.TAG_PROBE_SEC))
+            ok = speech >= config.TAG_SPEECH_MIN
         decisions.append({"start": round(s, 2), "end": round(e, 2),
-                          "speech": ok, "speech_prob": round(speech, 3),
+                          "speech": ok,
+                          "speech_prob": None if speech is None else round(speech, 3),
                           "tags": tags[:3]})
         if ok:
             kept.append([s, e])

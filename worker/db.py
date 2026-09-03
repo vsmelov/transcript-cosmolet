@@ -60,3 +60,22 @@ def job_done(job_id: int, cost: float = 0.0, artifact_path: str | None = None, m
 def job_fail(job_id: int, error: str) -> None:
     q("UPDATE jobs SET status='failed', finished_at=now(), error=%s WHERE id=%s",
       error[:2000], job_id)
+
+
+def wait_ready(timeout: float = 120.0, log=print) -> None:
+    """Дождаться готовности БД при старте.
+
+    Контейнер поднимается быстрее, чем Postgres успевает инициализироваться, и
+    воркер падал с 'the database system is starting up', перезапускаясь по кругу.
+    """
+    import time as _t
+    deadline = _t.time() + timeout
+    while True:
+        try:
+            q1("SELECT 1")
+            return
+        except Exception as exc:
+            if _t.time() > deadline:
+                raise
+            log("жду базу:", str(exc)[:80])
+            _t.sleep(3)

@@ -51,6 +51,23 @@ SCHEMA_MD = """# Формат транскриптов cosmolet
 """
 
 
+# Служебные метки спикера -> как они читаются в транскрипте. Текст таких реплик
+# НЕ выбрасывается: он может понадобиться, а метка честно говорит, что это не человек
+# из базы. Разные случаи разведены: фон — точно не речь, S1/S2 — речь неизвестного.
+SPEAKER_LABELS = {
+    "[noise]": "фон / не речь",
+    "S?": "не определён",
+}
+
+
+def display_speaker(name: str) -> str:
+    if name in SPEAKER_LABELS:
+        return SPEAKER_LABELS[name]
+    if name.startswith("S") and name[1:].isdigit():
+        return f"неизвестный ({name})"
+    return name
+
+
 def save(recording_id: int, src_name: str, audio_path: Path, duration: float,
          utts: list, clusters: list[dict], stats: dict) -> Path:
     """Записывает сегменты и конфликты в БД, кладёт .md и SCHEMA.md в artifacts."""
@@ -90,7 +107,7 @@ def save(recording_id: int, src_name: str, audio_path: Path, duration: float,
         m, s = divmod(rem, 60)
         conf = "" if u.confidence is None else f" · {u.confidence:.2f}"
         flag = " ⚠️" if u.ambiguous else ""
-        lines.append(f"**[{h:02d}:{m:02d}:{s:02d}] {u.speaker}{conf}{flag}:** {u.text}")
+        lines.append(f"**[{h:02d}:{m:02d}:{s:02d}] {display_speaker(u.speaker)}{conf}{flag}:** {u.text}")
         lines.append("")
     md = md_dir / "transcript.md"
     md.write_text("\n".join(lines), encoding="utf-8")

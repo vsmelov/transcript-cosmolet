@@ -76,19 +76,58 @@ def duration(path: Path) -> float | None:
 
 # --- эмбеддинги --------------------------------------------------------------
 
-def embed_span(src: Path, start: float, dur: float) -> np.ndarray:
-    """Нормированный вектор голоса для куска [start, start+dur]."""
-    with _ex_lock:
+def vector(samples: np.ndarray) -> np.ndarray:
+    """Нормированный вектор по готовым сэмплам 16k mono float32."""
+    if samples.size < 1600:                          # <0.1 c — эмбеддить нечего
+        raise RuntimeError("clip too short after decode")
+    with _ex_lock:                                   # sherpa-стрим не шарим между потоками
         ext = extractor()
-        with tempfile.TemporaryDirectory() as td:
-            samples = to_wav16k(Path(src), Path(td) / "x.wav", start, min(dur, CLIP_MAX_SEC))
-        if samples.size < 1600:                      # <0.1 c — эмбеддить нечего
-            raise RuntimeError("clip too short after decode")
         s = ext.create_stream()
         s.accept_waveform(16000, samples)
         s.input_finished()
         v = np.array(ext.compute(s), dtype=np.float64)
     return unit(v)
+
+
+def embed_span(src: Path, start: float, dur: float) -> np.ndarray:
+    """Нормированный вектор голоса для куска [start, start+dur]."""
+    with tempfile.TemporaryDirectory() as td:
+        samples = to_wav16k(Path(src), Path(td) / "x.wav", start, min(dur, CLIP_MAX_SEC))
+    return vector(samples)
+
+
+class Clip:
+    """Кусок записи, декодированный ОДИН раз: дальше половинки режутся срезами numpy.
+
+    Сплиттер перебирает десятки точек разреза внутри одной реплики; отдельный ffmpeg
+    на каждую точку превратил бы запрос в минуты (та же идея, что в
+    worker/embed.py AudioCache).
+    """
+
+    SR = 16000
+
+    def __init__(self, src: Path, start: float, dur: float):
+        self.t0 = max(0.0, float(start))
+        with tempfile.TemporaryDirectory() as td:
+            self.samples = to_wav16k(Path(src), Path(td) / "x.wav", self.t0, float(dur))
+
+    def embed_spans(self, spans) -> np.ndarray:
+        """Вектор по СКЛЕЕННОЙ речи: интервалы слов сшиваются, паузы и фон выбрасываются.
+
+        spans — ГЛОБАЛЬНЫЕ таймкоды (как в segments.words), пересчитываются к началу куска.
+        """
+        parts, total = [], 0.0
+        for s, e in spans:
+            a = max(0, int((float(s) - self.t0) * self.SR))
+            b = min(len(self.samples), int((float(e) - self.t0) * self.SR))
+            if b > a:
+                parts.append(self.samples[a:b])
+                total += (b - a) / self.SR
+                if total >= CLIP_MAX_SEC:            # длиннее эмбеддить незачем
+                    break
+        if total < 0.8:
+            raise RuntimeError("речи меньше 0.8с")
+        return vector(np.concatenate(parts))
 
 
 def unit(v: np.ndarray) -> np.ndarray:

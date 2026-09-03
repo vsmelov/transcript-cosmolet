@@ -27,10 +27,28 @@ SCRIBE_MODEL = os.environ.get("SCRIBE_MODEL", "scribe_v2")
 
 DAILY_BUDGET_USD = float(os.environ.get("DAILY_BUDGET_USD", "2.0"))
 
+# Синхронизация с облаком Plaud: токены создаёт `plaud login` на хосте, в контейнер
+# файл монтируется. Публичного API нет — ходим тем же путём, что официальный CLI.
+PLAUD_TOKENS = os.environ.get("PLAUD_TOKENS", "/plaud/tokens.json")
+PLAUD_SYNC_ENABLED = os.environ.get("PLAUD_SYNC", "1") == "1"
+PLAUD_SYNC_EVERY_SEC = int(os.environ.get("PLAUD_SYNC_EVERY_SEC", "900"))   # раз в 15 минут
+
+# Пулы обработчиков — по одному на этап, а не общий на всё. Этапы упираются в
+# РАЗНЫЕ ресурсы: скачивание и транскрипция ждут чужие сервисы (Plaud, ElevenLabs),
+# детектор и опознание жгут локальный процессор. Общий пул означал, что три
+# тяжёлых детектора занимают все слоты, пока сеть простаивает.
+# Этапы связаны только артефактами на диске, поэтому пулы работают независимо.
+DOWNLOAD_WORKERS = int(os.environ.get("DOWNLOAD_WORKERS", "4"))
+DETECT_WORKERS = int(os.environ.get("DETECT_WORKERS", "3"))    # CPU: VAD + классификатор
+# Одновременные запросы к Scribe ограничены тарифом ElevenLabs (на Starter немного).
+# Упёршийся в лимит запрос не теряется: клиент ретраит его с бэкоффом.
+QUALITY_WORKERS = int(os.environ.get("QUALITY_WORKERS", "4"))
+RESOLVE_WORKERS = int(os.environ.get("RESOLVE_WORKERS", "3"))  # CPU: эмбеддинги голоса
+
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "/models/campplus_zh_en_advanced.onnx")
 
-# Карта речи из чернового verbose_json: сегмент считается речью, если НЕ похож на
-# тишину/галлюцинацию. Пороги — стартовые, крутить по факту на реальных записях.
+
+
 # Детектор речи (локальный, бесплатный): Silero VAD + классификатор аудио-событий.
 # Заменил платный whisper-черновик: на 11-часовой ночной записи whisper пометил бы
 # речью 86% длительности, VAD+CED дают 2.6% — и это подтверждается прослушиванием.
@@ -45,6 +63,8 @@ REGION_PAD_SEC = 4.0          # поля региона — чтобы не ср
 
 # Качественный проход: файл длиннее — режем на куски (лимиты API по размеру запроса)
 QUALITY_CHUNK_SEC = 1200.0    # 20 мин на запрос к Scribe
+QUALITY_MIN_CHUNK_SEC = 0.6   # короче не отправляем: в таком куске нет ни слова,
+                              # а API отвергает его как битый файл
 SCRIBE_PRICE_PER_HOUR = 0.22
 
 # Диаризация/опознание
@@ -67,3 +87,8 @@ SPLIT_MIN_SEC = 8.0           # реплики короче не трогаем:
 SPLIT_MIN_SIDE_SEC = 2.5      # каждая половина должна содержать столько речи
 SPLIT_MAX_COS = 0.60          # косинус половин ниже — считаем, что говорят разные люди
 SPLIT_MAX_DEPTH = 2           # рекурсия: максимум 4 части из одной реплики
+
+# Классификатор аудио-событий — самая дорогая часть детектора. Короткие всплески
+# ему не по зубам (доверяем VAD), длинным достаточно пробы с начала куска.
+TAG_MIN_DUR = float(os.environ.get("TAG_MIN_DUR", "0.8"))
+TAG_PROBE_SEC = float(os.environ.get("TAG_PROBE_SEC", "6.0"))

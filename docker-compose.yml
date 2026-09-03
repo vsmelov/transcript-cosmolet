@@ -23,9 +23,12 @@ services:
       DATABASE_URL: postgresql://cosmolet:${POSTGRES_PASSWORD}@db:5432/cosmolet
       DATA_DIR: /data
       EMBED_MODEL: /models/campplus_zh_en_advanced.onnx
+      PLAUD_TOKENS: /plaud/tokens.json
     volumes:
       - ./data:/data
       - ./models:/models:ro
+      # токены Plaud: создаются на хосте командой `plaud login`, обновляются по refresh
+      - ${USERPROFILE:-~}/.plaud:/plaud
     depends_on:
       db:
         condition: service_healthy
@@ -33,6 +36,7 @@ services:
   ui:
     build: ./ui
     restart: unless-stopped
+    env_file: .env          # ключи провайдеров: UI показывает остатки на счетах
     environment:
       DATABASE_URL: postgresql://cosmolet:${POSTGRES_PASSWORD}@db:5432/cosmolet
       DATA_DIR: /data

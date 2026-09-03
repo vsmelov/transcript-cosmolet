@@ -7,6 +7,7 @@ import threading
 import time
 from pathlib import Path
 
+import numpy as np
 import psycopg
 from psycopg.rows import dict_row
 from fastapi import FastAPI, HTTPException, Request
@@ -29,6 +30,13 @@ except ValueError:
 MIGRATIONS = [
     "ALTER TABLE speaker_samples ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true",
 ]
+
+# --- ручной разрез реплики (POST /api/segments/{id}/split) --------------------
+# Пороги те же по смыслу, что у автосплиттера воркера (worker/diarize.py): режем,
+# только если голос по обе стороны реально разный и в каждой половине есть что слушать.
+SPLIT_MAX_COS = 0.60        # минимум косинуса выше порога — смены говорящего нет
+SPLIT_MIN_SIDE_SEC = 2.5    # меньше речи в половине — вектор половины недостоверен
+SPLIT_PROBES = 9            # узлов на проход (грубый + уточняющий): каждый узел = 2 эмбеддинга
 
 app = FastAPI(title="cosmolet ui")
 
@@ -174,6 +182,55 @@ def with_audio(rows, drop=True):
     return rows
 
 
+def as_dict(d):
+    """detail из jsonb: psycopg отдаёт dict, но в старых записях мог остаться текст."""
+    if isinstance(d, str):
+        try:
+            d = json.loads(d)
+        except Exception:
+            return {}
+    return d if isinstance(d, dict) else {}
+
+
+def utt(r, has_audio=False, **extra):
+    """Единый формат ФРАЗЫ для всех экранов UI (компонент «Фраза»).
+
+    Один и тот же объект приезжает из транскрипта, разметки, предложений и конфликтов,
+    поэтому UI рисует их одной функцией и не расходится в наборе кнопок и полей.
+    """
+    d = as_dict(r.get("detail"))
+    out = {
+        "id": int(r["id"]),
+        "recording_id": r.get("recording_id"),
+        "start_sec": float(r["start_sec"]),
+        "end_sec": float(r["end_sec"]),
+        "text": r.get("text") or "",
+        "speaker_name": r.get("speaker_name"),
+        "confidence": None if r.get("confidence") is None else float(r["confidence"]),
+        "inherited": bool(r.get("inherited")),
+        "ambiguous": bool(r.get("ambiguous")),
+        # почему спорная: из открытого конфликта, иначе из detail черновика
+        "reason": r.get("reason") or d.get("reason"),
+        "detail": d,
+        "has_audio": bool(has_audio),
+    }
+    out.update(extra)
+    return out
+
+
+# колонки сегмента, из которых собирается фраза
+SEG_COLS = """s.id, s.recording_id, s.start_sec, s.end_sec, s.text, s.speaker_name,
+              s.confidence, s.inherited, s.ambiguous, s.detail, s.asr_logprob"""
+
+
+def segments_by_ids(ids):
+    rows = q(f"""SELECT {SEG_COLS}, r.audio_path FROM segments s
+                 JOIN recordings r ON r.id = s.recording_id
+                 WHERE s.id = ANY(%s) ORDER BY s.start_sec, s.id""", (list(ids),))
+    return [utt(r, safe_data_path(r["audio_path"]) is not None,
+                asr_logprob=r["asr_logprob"]) for r in rows]
+
+
 @app.get("/api/recordings")
 def recordings():
     return with_audio(q(f"""
@@ -194,7 +251,7 @@ def recordings():
                ON cf.recording_id = r.id
         LEFT JOIN ({DOWNLOADING_SQL}) dl
                ON dl.recording_id = r.id
-        ORDER BY r.created_at DESC, r.id DESC"""))
+        ORDER BY coalesce(r.started_at, r.created_at) DESC, r.id DESC"""))
 
 
 @app.get("/api/recordings/summary")
@@ -236,7 +293,7 @@ def recordings_summary():
                ON sp.recording_id = r.id
         LEFT JOIN ({DOWNLOADING_SQL}) dl
                ON dl.recording_id = r.id
-        ORDER BY r.created_at DESC, r.id DESC"""))
+        ORDER BY coalesce(r.started_at, r.created_at) DESC, r.id DESC"""))
 
 
 @app.get("/api/recordings/{rec_id}")
@@ -254,11 +311,24 @@ def recording_detail(rec_id: int):
 
 @app.get("/api/recordings/{rec_id}/segments")
 def recording_segments(rec_id: int):
-    return q("""
-        SELECT id, start_sec, end_sec, text, speaker_name, confidence,
-               inherited, ambiguous, detail, asr_logprob
-        FROM segments WHERE recording_id = %s
-        ORDER BY start_sec, id""", (rec_id,))
+    """Лента транскрипта — список фраз в едином формате.
+
+    Открытый конфликт подтягивается сразу (LATERAL, чтобы сегмент не задвоился при
+    нескольких конфликтах): UI рисует бейдж «спорный» с причиной без второго запроса.
+    """
+    row = q1("SELECT audio_path FROM recordings WHERE id = %s", (rec_id,))
+    if row is None:
+        raise HTTPException(404, "recording not found")
+    has = safe_data_path(row["audio_path"]) is not None
+    rows = q(f"""
+        SELECT {SEG_COLS}, c.id AS conflict_id, c.reason
+        FROM segments s
+        LEFT JOIN LATERAL (SELECT id, reason FROM conflicts
+                            WHERE segment_id = s.id AND status = 'open'
+                            ORDER BY id LIMIT 1) c ON true
+        WHERE s.recording_id = %s
+        ORDER BY s.start_sec, s.id""", (rec_id,))
+    return [utt(r, has, asr_logprob=r["asr_logprob"], conflict_id=r["conflict_id"]) for r in rows]
 
 
 @app.get("/api/artifacts/{job_id}")
@@ -393,6 +463,91 @@ def speaker_detail(sp_id: int):
     return sp
 
 
+@app.get("/api/speakers/unknown")
+def unknown_speakers(min_sec: float = 60.0):
+    """Кто часто говорит, но до сих пор не заведён в базе.
+
+    Неопознанные метки (S1, S2, ...) внутри одной записи — это уже кластеры голосов.
+    Здесь мы склеиваем их МЕЖДУ записями по косинусу центроидов: один и тот же
+    человек, встреченный в пяти разговорах, должен предлагаться один раз, а не пять.
+    Заодно показываем ближайшего известного — часто это не новый человек, а промах
+    опознания, и правильное действие тогда «добавить эталон», а не «завести людей».
+    """
+    rows = q("""
+        SELECT s.recording_id, s.speaker_name, s.embedding, s.id AS seg_id,
+               s.start_sec, s.end_sec, s.text, r.title
+          FROM segments s JOIN recordings r ON r.id = s.recording_id
+         WHERE s.embedding IS NOT NULL AND s.speaker_name ~ '^S[0-9?]'
+         ORDER BY s.recording_id, s.speaker_name, (s.end_sec - s.start_sec) DESC""")
+    if not rows:
+        return {"groups": []}
+
+    def vec(e):
+        v = np.array(json.loads(e) if isinstance(e, str) else e, dtype=np.float64)
+        n = np.linalg.norm(v)
+        return v / n if n else v
+
+    # шаг 1: метка внутри записи -> центроид и самая длинная реплика как образец
+    labels = {}
+    for r in rows:
+        key = (r["recording_id"], r["speaker_name"])
+        g = labels.setdefault(key, {"vecs": [], "sec": 0.0, "n": 0, "best": r,
+                                    "title": r["title"], "rec": r["recording_id"]})
+        g["vecs"].append(vec(r["embedding"]))
+        g["sec"] += float(r["end_sec"]) - float(r["start_sec"])
+        g["n"] += 1
+    for g in labels.values():
+        m = np.mean(g["vecs"], axis=0)
+        n = np.linalg.norm(m)
+        g["c"] = m / n if n else m
+
+    # шаг 2: жадная склейка меток между записями (порог тот же, что у воркера)
+    JOIN = 0.70
+    groups = []
+    for key, g in sorted(labels.items(), key=lambda kv: -kv[1]["sec"]):
+        for gr in groups:
+            if float(np.dot(gr["c"], g["c"])) >= JOIN:
+                gr["members"].append(g)
+                gr["sec"] += g["sec"]
+                gr["n"] += g["n"]
+                w = np.mean([m["c"] for m in gr["members"]], axis=0)
+                gr["c"] = w / (np.linalg.norm(w) or 1)
+                break
+        else:
+            groups.append({"c": g["c"], "members": [g], "sec": g["sec"], "n": g["n"]})
+
+    known = {}
+    for r in q("""SELECT sp.name, ss.embedding FROM speakers sp
+                    JOIN speaker_samples ss ON ss.speaker_id = sp.id
+                   WHERE ss.embedding IS NOT NULL AND ss.is_active"""):
+        known.setdefault(r["name"], []).append(vec(r["embedding"]))
+    base = {}
+    for name, vs in known.items():
+        m = np.mean(vs, axis=0)
+        base[name] = m / (np.linalg.norm(m) or 1)
+
+    out = []
+    for gr in sorted(groups, key=lambda g: -g["sec"]):
+        if gr["sec"] < min_sec:
+            continue
+        near = sorted(((float(np.dot(gr["c"], v)), n) for n, v in base.items()), reverse=True)
+        best = max(gr["members"], key=lambda m: m["sec"])["best"]
+        out.append({
+            "labels": [f'#{m["rec"]} {m["best"]["speaker_name"]}' for m in gr["members"]],
+            "recordings": sorted({m["title"] for m in gr["members"]}),
+            "rec_count": len({m["rec"] for m in gr["members"]}),
+            "segments": gr["n"], "minutes": round(gr["sec"] / 60, 1),
+            "sample": {"segment_id": best["seg_id"], "recording_id": best["recording_id"],
+                       "start": round(float(best["start_sec"]), 2),
+                       "end": round(float(best["end_sec"]), 2),
+                       "text": (best["text"] or "")[:160]},
+            # близко к известному — скорее промах опознания, чем новый человек
+            "closest": [{"name": n, "cos": round(c, 2)} for c, n in near[:3]],
+            "likely_known": bool(near and near[0][0] >= 0.62),
+        })
+    return {"groups": out}
+
+
 @app.post("/api/speakers/sample/{sample_id}/toggle")
 def sample_toggle(sample_id: int):
     row = q1("""UPDATE speaker_samples SET is_active = NOT is_active
@@ -426,8 +581,11 @@ ANON_RE = r"^(s|speaker)[_ -]?([0-9]+|\?)$"
 @app.get("/api/enroll/candidates")
 def enroll_candidates(recording_id: int):
     rec, src = rec_audio(recording_id)
-    segs = q("""SELECT id, start_sec, end_sec, text, confidence, speaker_name, ambiguous, detail
-                FROM segments WHERE recording_id = %s ORDER BY start_sec""", (recording_id,))
+    segs = q(f"""SELECT {SEG_COLS}, c.reason FROM segments s
+                 LEFT JOIN LATERAL (SELECT reason FROM conflicts
+                                     WHERE segment_id = s.id AND status = 'open'
+                                     ORDER BY id LIMIT 1) c ON true
+                 WHERE s.recording_id = %s ORDER BY s.start_sec""", (recording_id,))
     names = {r["name"] for r in q("SELECT name FROM speakers")}
     refs = known_refs()
     groups = {}
@@ -436,20 +594,11 @@ def enroll_candidates(recording_id: int):
     out = []
     for label, items in groups.items():
         items.sort(key=lambda x: (x["end_sec"] - x["start_sec"]), reverse=True)
-        # показываем много фрагментов: по пяти обрывкам голос не опознать.
+        # отдаём кластер целиком (с потолком на всякий случай): по пяти обрывкам голос
+        # не опознать, а фильтры и счётчики в UI должны считать по всем репликам.
         # reason важен человеку: top2_close («похож и на другого») и low_confidence —
         # это разные ситуации, и разбираются они по-разному
-        top = []
-        for s in items[:25]:
-            d = s.get("detail") or {}
-            if isinstance(d, str):
-                try:
-                    d = json.loads(d)
-                except Exception:
-                    d = {}
-            top.append({k: s[k] for k in ("id", "start_sec", "end_sec", "text",
-                                          "confidence", "ambiguous")}
-                       | {"reason": d.get("reason")})
+        top = [utt(s, src is not None) for s in items[:300]]
         # эталон и матч считаем по самому длинному НЕспорному фрагменту: спорный может
         # оказаться чужой репликой, попавшей в кластер по ошибке провайдера
         clean = [s for s in items if not s["ambiguous"]] or items
@@ -473,6 +622,8 @@ def enroll_candidates(recording_id: int):
             "enroll_span": {"id": best["id"], "start_sec": best["start_sec"],
                             "end_sec": best["end_sec"]},
             "ambiguous_count": sum(1 for s in items if s["ambiguous"]),
+            # уже разобранные человеком — чтобы в заголовке кластера было видно прогресс
+            "confirmed_count": sum(1 for s in items if as_dict(s["detail"]).get("resolution")),
             "match": match,
             "match_error": err,
         })
@@ -542,12 +693,16 @@ def confirm_segment(body: dict):
 
     Спорные реплики — самый ценный материал: голос там звучит непривычно (эмоция,
     громкость, расстояние до микрофона), и именно они раздвигают похожих людей.
-    Подтверждение снимает пометку спорности, закрывает конфликт и кладёт фрагмент
-    в эталоны человека.
+    Подтверждение снимает пометку спорности, закрывает конфликт и (если enroll=true)
+    кладёт фрагмент в эталоны человека.
+
+    enroll=false — «просто смени имя»: пользователь уверен в спикере, но фрагмент
+    как эталон не годится (обрывок, шум на фоне, чужой микрофон).
     """
     b = body or {}
     seg_id = b.get("segment_id")
     name = str(b.get("name", "")).strip()
+    want = bool(b.get("enroll", True))
     if seg_id is None or not name:
         raise HTTPException(400, "segment_id and name are required")
     seg = q1("""SELECT s.id, s.recording_id, s.start_sec, s.end_sec, r.audio_path
@@ -557,9 +712,19 @@ def confirm_segment(body: dict):
         raise HTTPException(404, "segment not found")
 
     # шум/фон эталоном не делаем — только переклеиваем метку у реплики
-    res = {"noise": True} if name == "[noise]" else enroll(
-        {"recording_id": seg["recording_id"], "start_sec": seg["start_sec"],
-         "end_sec": seg["end_sec"], "speaker_name": name})
+    res, err = {"enrolled": False}, None
+    if name == "[noise]":
+        res["noise"] = True
+    elif want:
+        try:
+            res = {**enroll({"recording_id": seg["recording_id"], "start_sec": seg["start_sec"],
+                             "end_sec": seg["end_sec"], "speaker_name": name}), "enrolled": True}
+        except HTTPException as e:
+            # эталон не вышел (коротыш, нет аудио) — но имя спикера всё равно меняем:
+            # решение человека важнее, чем неудача с клипом
+            err = str(e.detail)
+
+    note = "подтверждён эталоном" if res.get("enrolled") else "без эталона"
 
     def run(c):
         with c.transaction():
@@ -570,12 +735,216 @@ def confirm_segment(body: dict):
                     ambiguous = false,
                     detail = coalesce(detail, '{}'::jsonb)
                              || jsonb_build_object('resolution', %s::text)
-                WHERE id = %s""", (name, name, f"user:{name} (подтверждён эталоном)", seg["id"]))
+                WHERE id = %s""", (name, name, f"user:{name} ({note})", seg["id"]))
             c.execute("""UPDATE conflicts SET status='resolved', resolved_name=%s,
                          resolved_by='user', resolved_at=now()
                          WHERE segment_id = %s AND status='open'""", (name, seg["id"]))
     _run(run)
-    return {**res, "segment_id": seg["id"], "confirmed": True}
+    out = segments_by_ids([seg["id"]])
+    return {**res, "segment_id": seg["id"], "confirmed": True, "name": name,
+            "enroll_error": err, "utterance": out[0] if out else None}
+
+
+@app.post("/api/segments/bulk")
+def segments_bulk(body: dict):
+    """Массовое действие над выбранными фразами: всем один спикер (или '[noise]').
+
+    Эталон по умолчанию НЕ создаётся: пачка выбрана глазами по списку, среди неё почти
+    наверняка есть обрывки. enroll=true берёт под эталон одну — самую длинную — фразу.
+    """
+    b = body or {}
+    ids = []
+    for x in (b.get("ids") or []):
+        try:
+            ids.append(int(x))
+        except (TypeError, ValueError):
+            pass
+    name = str(b.get("name", "")).strip()
+    if not ids or not name:
+        raise HTTPException(400, "ids and name are required")
+
+    enrolled, err = None, None
+    if bool(b.get("enroll", False)) and name != "[noise]":
+        best = q1("""SELECT id, recording_id, start_sec, end_sec FROM segments
+                     WHERE id = ANY(%s) ORDER BY end_sec - start_sec DESC LIMIT 1""", (ids,))
+        if best is not None:
+            try:
+                enrolled = enroll({"recording_id": best["recording_id"],
+                                   "start_sec": best["start_sec"], "end_sec": best["end_sec"],
+                                   "speaker_name": name})
+            except HTTPException as e:
+                err = str(e.detail)
+
+    note = f"user:{name} (массово, {'с эталоном' if enrolled else 'без эталона'})"
+
+    def run(c):
+        with c.transaction():
+            cur = c.execute("""
+                UPDATE segments
+                SET speaker_name = %s,
+                    speaker_id = (SELECT id FROM speakers WHERE name = %s),
+                    ambiguous = false,
+                    detail = coalesce(detail, '{}'::jsonb)
+                             || jsonb_build_object('resolution', %s::text)
+                WHERE id = ANY(%s) RETURNING id""", (name, name, note, ids))
+            n = len(cur.fetchall())
+            cur = c.execute("""UPDATE conflicts SET status='resolved', resolved_name=%s,
+                               resolved_by='user', resolved_at=now()
+                               WHERE status='open' AND segment_id = ANY(%s) RETURNING id""",
+                            (name, ids))
+            return n, len(cur.fetchall())
+
+    updated, closed = _run(run)
+    return {"ok": True, "updated": updated, "conflicts_closed": closed, "name": name,
+            "enrolled": enrolled, "enroll_error": err,
+            "segments": segments_by_ids(ids)}
+
+
+def _words(raw):
+    """words из jsonb -> список слов с валидными ГЛОБАЛЬНЫМИ таймкодами."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            return []
+    out = []
+    for w in (raw or []):
+        if not isinstance(w, dict):
+            continue
+        try:
+            s, e = float(w["start"]), float(w["end"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if e > s:
+            out.append({**w, "start": s, "end": e})
+    return out
+
+
+def _grid(n, k):
+    """k равномерных индексов из диапазона [0, n)."""
+    if n <= k:
+        return list(range(n))
+    return sorted({round(i * (n - 1) / (k - 1)) for i in range(k)})
+
+
+def _best_cut(clip, spans, cands):
+    """Точка разреза с минимальным косинусом между половинами.
+
+    Полный перебор границ слов стоит 2 эмбеддинга на границу и на длинной реплике
+    занимает минуты, поэтому идём в два прохода: грубая сетка, затем уточнение
+    вокруг найденного минимума.
+    """
+    seen = {}
+
+    def cos_at(i):
+        if i not in seen:
+            try:
+                seen[i] = voice.cos(clip.embed_spans(spans[:i]), clip.embed_spans(spans[i:]))
+            except Exception:
+                seen[i] = 1.0                 # половина не эмбеддится — точка не годится
+        return seen[i]
+
+    n = len(cands)
+    coarse = _grid(n, SPLIT_PROBES)
+    bp = min(coarse, key=lambda p: cos_at(cands[p]))
+    step = max(1, (n - 1) // max(SPLIT_PROBES - 1, 1))
+    lo, hi = max(0, bp - step), min(n - 1, bp + step)
+    fine = [lo + p for p in _grid(hi - lo + 1, SPLIT_PROBES)]
+    bp = min(fine + [bp], key=lambda p: cos_at(cands[p]))
+    return cands[bp], seen[cands[bp]]
+
+
+@app.post("/api/segments/{seg_id}/split")
+def split_segment(seg_id: int):
+    """Разрезать реплику там, где внутри неё сменился говорящий.
+
+    Кандидаты — границы слов; для каждой считаем вектор левой и правой части ПО
+    СКЛЕЕННОЙ РЕЧИ (паузы выброшены) и ищем минимум косинуса. Если минимум выше
+    SPLIT_MAX_COS или в половине меньше SPLIT_MIN_SIDE_SEC речи — НЕ режем и
+    объясняем почему: молчаливый отказ выглядел бы как сломанная кнопка.
+    """
+    seg = q1("""SELECT s.id, s.recording_id, s.start_sec, s.end_sec, s.text, s.speaker_id,
+                       s.speaker_name, s.detail, s.words, s.asr_logprob, r.audio_path
+                FROM segments s JOIN recordings r ON r.id = s.recording_id
+                WHERE s.id = %s""", (seg_id,))
+    if seg is None:
+        raise HTTPException(404, "segment not found")
+
+    no = lambda why: {"split": False, "segment_id": seg_id, "reason": why}
+
+    words = _words(seg["words"])
+    if len(words) < 6:
+        return no("у реплики нет пословных таймкодов (или их меньше шести) — резать не по чему")
+    spans = [(w["start"], w["end"]) for w in words]
+    total = sum(e - s for s, e in spans)
+    if total < 2 * SPLIT_MIN_SIDE_SEC:
+        return no(f"в реплике всего {total:.1f}с речи — на две половины "
+                  f"по {SPLIT_MIN_SIDE_SEC:g}с не хватает")
+    src = safe_data_path(seg["audio_path"])
+    if src is None:
+        return no("аудиофайл записи недоступен — посчитать голоса половин нечем")
+
+    # кандидаты: границы слов, по обе стороны которых достаточно речи
+    acc, left = [], 0.0
+    for s, e in spans:
+        left += e - s
+        acc.append(left)
+    cands = [i for i in range(1, len(words))
+             if acc[i - 1] >= SPLIT_MIN_SIDE_SEC and total - acc[i - 1] >= SPLIT_MIN_SIDE_SEC]
+    if not cands:
+        return no("нет точки, где по обе стороны набирается "
+                  f"{SPLIT_MIN_SIDE_SEC:g}с речи")
+
+    a = max(0.0, min(float(seg["start_sec"]), spans[0][0]) - 0.10)
+    b = max(float(seg["end_sec"]), spans[-1][1]) + 0.10
+    try:
+        clip = voice.Clip(Path(src), a, b - a)
+    except Exception as e:
+        return no(f"не удалось декодировать аудио реплики: {str(e)[:200]}")
+    idx, best = _best_cut(clip, spans, cands)
+    if best > SPLIT_MAX_COS:
+        return no(f"голос внутри реплики не меняется: самая непохожая пара половин даёт "
+                  f"косинус {best:.2f}, а режем только ниже {SPLIT_MAX_COS:.2f}")
+
+    lw, rw = words[:idx], words[idx:]
+    cut, r_start = float(lw[-1]["end"]), float(rw[0]["start"])
+    txt = lambda ws: " ".join(str(w.get("text", "")) for w in ws).strip()
+    vec = {}
+    for side, ws in (("l", spans[:idx]), ("r", spans[idx:])):
+        try:                                   # вектор половины уже осмыслен — сохраняем
+            vec[side] = voice.vec_literal(clip.embed_spans(ws))
+        except Exception:
+            vec[side] = None
+    info = {"split_cos": round(best, 3), "split_at": round(cut, 2)}
+
+    def run(c):
+        with c.transaction():
+            # левая половина остаётся в исходной строке: ссылки на сегмент не ломаются
+            c.execute("""
+                UPDATE segments
+                SET end_sec = %s, text = %s, words = %s::jsonb, ambiguous = true,
+                    confidence = NULL, inherited = false, embedding = %s::vector,
+                    detail = coalesce(detail, '{}'::jsonb) || %s::jsonb
+                WHERE id = %s""",
+                      (cut, txt(lw), json.dumps(lw, ensure_ascii=False), vec["l"],
+                       json.dumps({**info, "split_side": "left"}), seg_id))
+            row = c.execute("""
+                INSERT INTO segments (recording_id, start_sec, end_sec, text, speaker_id,
+                                      speaker_name, confidence, inherited, ambiguous, detail,
+                                      embedding, words, asr_logprob)
+                VALUES (%s, %s, %s, %s, %s, %s, NULL, false, true, %s::jsonb, %s::vector,
+                        %s::jsonb, %s)
+                RETURNING id""",
+                            (seg["recording_id"], r_start, float(seg["end_sec"]), txt(rw),
+                             seg["speaker_id"], seg["speaker_name"],
+                             json.dumps({**info, "split_from": seg_id, "split_side": "right"}),
+                             vec["r"], json.dumps(rw, ensure_ascii=False), seg["asr_logprob"]))
+            return row.fetchone()["id"]
+
+    new_id = _run(run)
+    return {"split": True, "cos": round(best, 3), "cut_sec": round(cut, 2),
+            "segment_id": seg_id, "new_id": new_id,
+            "segments": segments_by_ids([seg_id, new_id])}
 
 
 @app.post("/api/enroll/rename_cluster")
@@ -613,17 +982,15 @@ def suggestions():
     unnamed = q(f"""
         SELECT * FROM (
           SELECT DISTINCT ON (s.recording_id, s.speaker_name)
-                 s.id, s.recording_id, s.start_sec, s.end_sec, s.text, s.speaker_name,
-                 s.confidence, coalesce(r.title, r.filename) AS rec_title, r.audio_path
+                 {SEG_COLS}, coalesce(r.title, r.filename) AS rec_title, r.audio_path
           FROM segments s JOIN recordings r ON r.id = s.recording_id
           WHERE s.end_sec - s.start_sec >= 6 AND s.speaker_name ~* '{ANON_RE}'
           ORDER BY s.recording_id, s.speaker_name, (s.end_sec - s.start_sec) DESC
         ) t ORDER BY (t.end_sec - t.start_sec) DESC LIMIT 30""")
-    enrich = q("""
+    enrich = q(f"""
         SELECT * FROM (
           SELECT DISTINCT ON (s.recording_id, s.speaker_name)
-                 s.id, s.recording_id, s.start_sec, s.end_sec, s.text, s.speaker_name,
-                 s.confidence, coalesce(r.title, r.filename) AS rec_title, r.audio_path
+                 {SEG_COLS}, coalesce(r.title, r.filename) AS rec_title, r.audio_path
           FROM segments s JOIN recordings r ON r.id = s.recording_id
           WHERE s.confidence BETWEEN 0.5 AND 0.75
             AND s.speaker_name IN (SELECT name FROM speakers)
@@ -636,7 +1003,10 @@ def suggestions():
            for s in samples
            if s["is_active"] and s["coherence"] is not None and s["coherence"] < 0.5]
     bad.sort(key=lambda s: s["coherence"])
-    return {"unnamed": with_audio(unnamed), "enrich": with_audio(enrich), "bad_samples": bad}
+    sug = lambda rows: [utt(r, safe_data_path(r["audio_path"]) is not None,
+                            rec_title=r["rec_title"], asr_logprob=r["asr_logprob"])
+                        for r in rows]
+    return {"unnamed": sug(unnamed), "enrich": sug(enrich), "bad_samples": bad}
 
 
 @app.get("/api/speakers/sample/{sample_id}")
@@ -652,15 +1022,21 @@ def speaker_sample(sample_id: int, request: Request):
 
 @app.get("/api/conflicts")
 def conflicts(status: str = "open"):
-    return with_audio(q("""
-        SELECT c.id, c.segment_id, c.reason, c.status, c.judge_verdict,
+    """Спорные фразы — тот же формат фразы, плюс поля самого конфликта."""
+    rows = q(f"""
+        SELECT c.id AS conflict_id, c.reason, c.status, c.judge_verdict,
                c.resolved_name, c.resolved_by, c.created_at, c.resolved_at,
-               s.recording_id, s.start_sec, s.end_sec, s.text,
-               s.speaker_name, s.confidence, s.detail, r.audio_path
+               {SEG_COLS}, coalesce(r.title, r.filename) AS rec_title, r.audio_path
         FROM conflicts c JOIN segments s ON s.id = c.segment_id
                          JOIN recordings r ON r.id = s.recording_id
         WHERE c.status = %s
-        ORDER BY c.id""", (status,)))
+        ORDER BY c.id""", (status,))
+    return [utt(r, safe_data_path(r["audio_path"]) is not None,
+                conflict_id=r["conflict_id"], segment_id=r["id"], status=r["status"],
+                rec_title=r["rec_title"], judge_verdict=r["judge_verdict"],
+                resolved_name=r["resolved_name"], resolved_by=r["resolved_by"],
+                created_at=r["created_at"], resolved_at=r["resolved_at"])
+            for r in rows]
 
 
 @app.post("/api/conflicts/{conflict_id}/resolve")
@@ -735,18 +1111,56 @@ def disk():
 @app.post("/api/recordings/{rec_id}/reprocess")
 def reprocess(rec_id: int, body: dict):
     stage = (body or {}).get("from_stage")
-    if stage not in ("draft", "quality", "resolve"):
-        raise HTTPException(400, "from_stage must be draft|quality|resolve")
+    # Ждущий статус очереди нужного этапа: пулы воркеров разбирают записи
+    # по статусу, а не по флагу в meta.
+    queue = {"detect": "new", "quality": "detected", "resolve": "transcribed"}
+    if stage not in queue:
+        raise HTTPException(400, "from_stage must be detect|quality|resolve")
 
     def run(c):
-        return c.execute("""
-            UPDATE recordings
-            SET meta = meta || jsonb_build_object('reprocess_from', %s), status = 'new'
-            WHERE id = %s RETURNING id""", (stage, rec_id)).fetchone()
+        return c.execute("UPDATE recordings SET status = %s WHERE id = %s RETURNING id",
+                         (queue[stage], rec_id)).fetchone()
 
     if _run(run) is None:
         raise HTTPException(404, "recording not found")
     return {"ok": True, "id": rec_id, "from_stage": stage}
+
+
+@app.get("/api/balances")
+def balances():
+    """Остатки на счетах провайдеров: очередь не должна вставать молча из-за нуля.
+
+    ElevenLabs отдаёт квоту только ключу с правом user_read — без него честно
+    говорим, что остаток недоступен, вместо того чтобы показать ноль.
+    """
+    import httpx
+    c = httpx.Client(timeout=20, trust_env=False)   # системный прокси не для loopback-мира
+    out = []
+    try:
+        d = c.get("https://openrouter.ai/api/v1/credits",
+                  headers={"Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}"}).json()["data"]
+        left = float(d["total_credits"]) - float(d["total_usage"])
+        out.append({"api": "OpenRouter", "ok": True, "text": f"${left:,.2f}",
+                    "low": left < 5, "note": "судья спорных реплик"})
+    except Exception as exc:
+        out.append({"api": "OpenRouter", "ok": False, "text": "нет данных", "note": str(exc)[:100]})
+    try:
+        r = c.get("https://api.elevenlabs.io/v1/user/subscription",
+                  headers={"xi-api-key": os.environ["ELEVENLABS_API_KEY"]})
+        if r.status_code == 401:
+            out.append({"api": "ElevenLabs", "ok": False, "text": "нужно право user_read",
+                        "note": "elevenlabs.io -> API key -> включить User: Read"})
+        else:
+            d = r.json()
+            used, lim = int(d.get("character_count", 0)), int(d.get("character_limit", 0))
+            left = lim - used
+            out.append({"api": "ElevenLabs", "ok": True,
+                        "text": f"{left:,} из {lim:,} кредитов".replace(",", " "),
+                        "low": lim and left < lim * 0.1,
+                        "note": f"тариф {d.get('tier', '?')}, транскрипция Scribe"})
+    except Exception as exc:
+        out.append({"api": "ElevenLabs", "ok": False, "text": "нет данных", "note": str(exc)[:100]})
+    return {"balances": out}
 
 
 @app.get("/api/costs/today")
@@ -861,4 +1275,98 @@ def usage():
         "by_recording": by_recording,
         "daily": [{"day": d["day"], "usd": round(_f(d["usd"]), 6), "calls": int(d["calls"] or 0)}
                   for d in daily],
+    }
+
+
+# --- сводный прогресс конвейера (шапка вкладки Jobs) -------------------------
+
+PIPELINE = ["download", "detect", "quality", "resolve", "store"]
+
+
+# Пул на каждый этап свой: этапы упираются в разные ресурсы (сеть чужих сервисов
+# против локального процессора), поэтому и очереди у них раздельные.
+# stage -> (env лимита, дефолт, статус «ждёт», статус «в работе»)
+POOLS = {
+    "download": ("DOWNLOAD_WORKERS", 4, "pending_download", "downloading"),
+    "detect":   ("DETECT_WORKERS",   3, "new",              "detecting"),
+    "quality":  ("QUALITY_WORKERS",  4, "detected",         "transcribing"),
+    "resolve":  ("RESOLVE_WORKERS",  3, "transcribed",      "resolving"),
+}
+
+
+@app.get("/api/progress")
+def progress():
+    """Сколько записей и часов прошло каждый этап конвейера.
+
+    Считаем по завершённым job'ам: этап пройден, если у записи есть job этой стадии
+    со статусом done. Часы берём из длительности записи — так виден реальный объём
+    работы, а не просто число файлов (запись на 12 часов и на 5 минут несопоставимы).
+    """
+    totals = q1("""SELECT count(*) AS recs,
+                          coalesce(sum(duration_sec), 0) / 3600.0 AS hours,
+                          coalesce(sum(size_bytes), 0) / 1073741824.0 AS gb
+                     FROM recordings""") or {}
+    # скачивание считаем по факту наличия файла: часть записей пришла не из облака
+    downloaded = q1("""SELECT count(*) AS recs,
+                              coalesce(sum(duration_sec), 0) / 3600.0 AS hours
+                         FROM recordings WHERE audio_path IS NOT NULL""") or {}
+
+    done_by_stage = {r["stage"]: r for r in q("""
+        SELECT j.stage, count(DISTINCT r.id) AS recs,
+               coalesce(sum(DISTINCT r.duration_sec), 0) / 3600.0 AS hours
+          FROM jobs j JOIN recordings r ON r.id = j.recording_id
+         WHERE j.status = 'done'
+         GROUP BY j.stage""")}
+    running = {r["stage"]: r["n"] for r in q(
+        "SELECT stage, count(*) AS n FROM jobs WHERE status='running' GROUP BY stage")}
+    # Ошибки показываем ТОЛЬКО актуальные: у записей, которые сейчас в статусе failed.
+    # Историю падений считать бессмысленно — почти все они уже переиграны после
+    # починок, и в шапке это выглядело так, будто всё разваливается.
+    failed = {r["stage"]: r["n"] for r in q("""
+        SELECT j.stage, count(*) AS n FROM jobs j JOIN recordings r ON r.id = j.recording_id
+         WHERE j.status = 'failed' AND r.status = 'failed' GROUP BY j.stage""")}
+    retried = q1("""SELECT count(*) AS n FROM jobs j JOIN recordings r ON r.id = j.recording_id
+                     WHERE j.status='failed' AND r.status <> 'failed'""") or {}
+
+    by_status = {r["status"]: r for r in q("""
+        SELECT status, count(*) AS n, coalesce(sum(duration_sec), 0) / 3600.0 AS hours
+          FROM recordings GROUP BY status""")}
+
+    total_recs = totals.get("recs") or 0
+    total_hours = float(totals.get("hours") or 0)
+    stages = []
+    for st in PIPELINE:
+        if st == "download":
+            recs = downloaded.get("recs") or 0
+            hours = float(downloaded.get("hours") or 0)
+        else:
+            row = done_by_stage.get(st) or {}
+            recs = row.get("recs") or 0
+            hours = float(row.get("hours") or 0)
+        # у store своего пула нет: он идёт хвостом опознания в том же потоке
+        env, default, wait_st, busy_st = POOLS.get(st, (None, 0, None, None))
+        w = by_status.get(wait_st) or {}
+        b = by_status.get(busy_st) or {}
+        stages.append({
+            "stage": st,
+            "recs": recs, "recs_total": total_recs,
+            "hours": round(hours, 1), "hours_total": round(total_hours, 1),
+            "pct": round(hours / total_hours * 100, 1) if total_hours else 0.0,
+            "running": running.get(st, 0), "failed": failed.get(st, 0),
+            # детализация пула: занято потоков из лимита и сколько ждёт своей очереди
+            "workers": int(os.environ.get(env, default)) if env else 0,
+            "busy": b.get("n", 0),
+            "waiting": w.get("n", 0),
+            "waiting_hours": round(float(w.get("hours") or 0), 1),
+        })
+    return {
+        "recs_total": total_recs,
+        "hours_total": round(total_hours, 1),
+        "gb_total": round(float(totals.get("gb") or 0), 1),
+        "stages": stages,
+        # общий прогресс: доля часов, доехавших до конца конвейера
+        "overall_pct": stages[-1]["pct"] if stages else 0.0,
+        "retried": retried.get("n", 0),   # падения, уже исправленные повтором
+        "queue": {r["status"]: r["n"] for r in q(
+            "SELECT status, count(*) AS n FROM recordings GROUP BY status")},
     }

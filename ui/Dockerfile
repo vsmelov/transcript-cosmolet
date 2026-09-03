@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -r
 WORKDIR /app
 
 RUN pip install --no-cache-dir fastapi "uvicorn[standard]" "psycopg[binary]" \
-    numpy "sherpa-onnx>=1.10"
+    numpy "sherpa-onnx>=1.10" httpx
 
 COPY *.py .
 COPY static ./static

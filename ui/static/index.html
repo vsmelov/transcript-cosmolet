@@ -59,21 +59,13 @@ a{color:var(--acc)}
 .pipe{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin:6px 0}
 .stage{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;min-width:170px;font-size:12px}
 .arr{align-self:center;color:var(--dim)}
-.seg{padding:5px 10px;border:1px solid transparent;border-radius:6px;cursor:pointer;display:flex;gap:10px;align-items:baseline;transition:background .4s,box-shadow .4s,border-color .4s}
-.seg:hover{background:var(--panel)}
-.seg.amb{border-color:var(--red)}
-.seg .t,.frag .t{color:var(--dim);font-variant-numeric:tabular-nums;flex:none}
-.frag{display:flex;gap:10px;align-items:baseline;padding:3px 0}
-.frag.amb{opacity:.62;border-left:2px solid var(--red);padding-left:6px}
 .spk{font-weight:600;flex:none}
 .badge{font-size:11px;border:1px solid var(--border);border-radius:8px;padding:0 6px;color:var(--dim);flex:none;white-space:nowrap}
 .badge.bad{color:var(--red);border-color:var(--red)}
 .txt{flex:1;min-width:0}
-.pan{margin:2px 0 10px 78px;padding:10px;background:var(--panel);border:1px solid var(--border);border-radius:6px;font-size:13px}
 .rsrow{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:8px}
-.cand span{margin-right:12px}
 .hl{border-color:var(--acc)!important;background:var(--hl)!important;box-shadow:0 0 0 2px var(--acc)}
-.card.hl,.seg.hl{transition:background .4s,box-shadow .4s,border-color .4s}
+.card.hl,.utt.hl{transition:background .4s,box-shadow .4s,border-color .4s}
 tr.hl td{background:var(--hl);box-shadow:inset 0 1px 0 var(--acc),inset 0 -1px 0 var(--acc)}
 .subnav{display:flex;gap:4px;align-items:center;margin-bottom:6px}
 .subnav button{background:none;border:1px solid transparent;color:var(--dim);padding:4px 10px;border-radius:6px;cursor:pointer;font:inherit;font-size:13px}
@@ -91,7 +83,58 @@ tr.hl td{background:var(--hl);box-shadow:inset 0 1px 0 var(--acc),inset 0 -1px 0
 .spks{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
 .spkb{color:var(--dim)}
 .trhead{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin:8px 0}
+/* ---- компонент «Фраза» (Utterance): один рендер на все четыре экрана ---- */
+.utt{border:1px solid transparent;border-radius:6px;padding:4px 8px;margin-bottom:2px;
+     transition:background .2s,border-color .4s,box-shadow .4s}
+.utt:hover{background:var(--panel)}
+.utt.amb{border-color:var(--red)}
+.utt.card{background:var(--panel);border-color:var(--border);margin-bottom:6px;padding:8px 10px}
+.utt.sel{background:var(--hl);border-color:var(--acc)}
+.cards>.utt{width:100%}
+.urow{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.utt .t{color:var(--dim);font-variant-numeric:tabular-nums;flex:none}
+.utt .txt{flex:1 1 220px;min-width:0}
+.usel{width:auto;flex:none;accent-color:var(--acc);cursor:pointer;align-self:center;margin:0}
+.uctx{margin-bottom:3px}
+.udet{margin-top:2px;font-size:11px;color:var(--dim)}
+.ures:empty{display:none}
+.ures{margin-top:3px}
+/* действия: у обычной фразы проявляются при наведении, у спорной видны всегда.
+   Место под них занято всегда — иначе строка прыгала бы под курсором */
+.uacts{display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-left:auto;
+       opacity:0;pointer-events:none;transition:opacity .18s}
+.utt:hover .uacts,.utt:focus-within .uacts,.utt.always .uacts{opacity:1;pointer-events:auto}
+.uacts select{padding:2px 6px;font-size:12px;max-width:150px}
+.uacts input{width:110px}
+.chk{display:flex;align-items:center;gap:3px;font-size:11px;color:var(--dim);
+     white-space:nowrap;cursor:pointer}
+.chk input{width:auto;accent-color:var(--acc);cursor:pointer;margin:0}
+.badge.ok{color:var(--green);border-color:var(--green)}
+.utt.cur{box-shadow:inset 3px 0 0 var(--acc);background:var(--panel)}
+/* панель фильтров над любым списком фраз */
+.fbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--panel);
+      border:1px solid var(--border);border-radius:8px;padding:6px 10px;margin:6px 0}
+.fseg{display:flex;gap:2px;align-items:center}
+.fseg button{background:none;border:1px solid transparent;color:var(--dim);padding:3px 9px;
+             border-radius:6px;cursor:pointer;font:inherit;font-size:12px;white-space:nowrap}
+.fseg button:hover{color:var(--text)}
+.fseg button.on{color:var(--text);background:var(--panel2);border-color:var(--border)}
+.fbar select{padding:3px 6px;font-size:12px}
+.fbar input{width:170px}
+.fbar .keys{margin-left:auto}
+/* липкая панель массовых действий */
+#bulkBar{position:fixed;left:0;right:0;bottom:0;z-index:9;display:none;padding:8px 16px;
+         background:var(--panel2);border-top:1px solid var(--acc);box-shadow:0 -6px 20px rgba(0,0,0,.5)}
+#bulkBar .brow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;max-width:1200px;margin:0 auto}
+body.bulk main{padding-bottom:110px}
 /* Usage */
+.progbox{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:12px}
+.prow{display:flex;align-items:center;gap:10px;margin:5px 0}
+.prow .nm{width:120px;flex:none;font-size:13px}
+.prow .track{flex:1;height:10px;background:var(--panel2);border:1px solid var(--border);border-radius:5px;overflow:hidden;position:relative}
+.prow .track>i{display:block;height:100%;background:var(--acc);transition:width .4s}
+.prow .track>i.done{background:var(--green)}
+.prow .num{width:220px;flex:none;text-align:right;font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums}
 .bar{height:7px;background:var(--panel2);border:1px solid var(--border);border-radius:5px;margin:8px 0 4px;overflow:hidden}
 .bar>i{display:block;height:100%;background:var(--green)}
 .card.wide{width:100%}
@@ -121,8 +164,9 @@ svg text{font-family:inherit}
 </header>
 <main>
   <section id="tab-jobs" class="tab">
+    <div id="progBox" class="progbox"><span class="dim">загрузка…</span></div>
     <table>
-      <thead><tr><th>ID</th><th>Запись</th><th>Источник</th><th>Статус</th><th>Длит.</th><th>Размер</th><th>Сегм.</th><th>Конфл.</th><th>Стоимость</th><th>Создана</th><th></th></tr></thead>
+      <thead><tr><th>ID</th><th>Запись</th><th>Источник</th><th>Статус</th><th>Длит.</th><th>Размер</th><th>Сегм.</th><th>Конфл.</th><th>Стоимость</th><th>Записана</th><th></th></tr></thead>
       <tbody id="jobsBody"><tr><td colspan="11" class="dim">загрузка…</td></tr></tbody>
     </table>
   </section>
@@ -138,6 +182,7 @@ svg text{font-family:inherit}
         <button class="act" data-act="playat">▶ играть с <span id="playHintT"></span></button>
         <span class="dim" style="font-size:12px;margin-left:6px">браузер не даёт стартовать звук без клика</span>
       </div>
+      <div id="trFilter"></div>
       <div id="segList"></div>
     </div>
   </section>
@@ -147,6 +192,7 @@ svg text{font-family:inherit}
       <button data-vsec="people" class="on">Люди</button>
       <button data-vsec="enroll">Разметка записи</button>
       <button data-vsec="sugg">Предложения</button>
+      <button data-vsec="unknown">Кого не хватает</button>
     </div>
     <div id="vsec-people" class="vsec" style="display:flex;gap:16px;align-items:flex-start">
       <div id="peopleList" style="flex:0 0 250px"><div class="dim">загрузка…</div></div>
@@ -158,10 +204,17 @@ svg text{font-family:inherit}
         <button class="act" data-act="ereload">пересчитать</button>
         <span id="enrollHint" class="dim" style="font-size:12px"></span>
       </div>
+      <div id="enrollFilter"></div>
       <div id="enrollBody"><div class="dim">выберите запись</div></div>
     </div>
     <div id="vsec-sugg" class="vsec" style="display:none">
+      <div id="suggFilter"></div>
       <div id="suggBody"><div class="dim">загрузка…</div></div>
+    </div>
+    <div id="vsec-unknown" class="vsec" style="display:none">
+      <div class="dim" style="margin-bottom:8px">Голоса, которые много говорят, но не опознаны.
+        Одинаковые голоса из разных записей сведены в одну строку.</div>
+      <div id="unkBody"><div class="dim">загрузка…</div></div>
     </div>
   </section>
 
@@ -186,10 +239,26 @@ svg text{font-family:inherit}
   </section>
 </main>
 
+<!-- массовые действия: появляется, как только выбрана хотя бы одна фраза -->
+<div id="bulkBar">
+  <div class="brow">
+    <b id="bulkN">выбрано 0</b>
+    <select id="bulkWho" title="кому отдать все выбранные фразы"><option value="">— кому отдать —</option></select>
+    <button class="act" data-act="bassign"
+      title="Назначить выбранным фразам этого спикера: имя сменится, пометка «спорный» снимется, открытые конфликты закроются.">→ назначить спикера</button>
+    <label class="chk" title="Отмечено — самая длинная из выбранных фраз дополнительно уйдёт в эталоны голоса. Снято (по умолчанию) — база голосов не меняется: в пачке, выбранной глазами, почти всегда есть обрывки.">
+      <input type="checkbox" id="bulkEnroll"> + эталон из самой длинной</label>
+    <button class="act" data-act="bnoise"
+      title="Пометить все выбранные фразы как шум/фон ([noise]). Эталоны не создаются, конфликты закрываются.">🗑 мусор / фон</button>
+    <button class="act" data-act="bclear" title="Снять выделение со всех фраз.">снять выделение</button>
+    <span class="dim" id="bulkWhat" style="flex:1 1 100%;font-size:12px"></span>
+  </div>
+</div>
+
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
-let TAB = 'jobs', RECS = [], SEGS = [], SPK = [], CONF_BY_SEG = {}, OPEN = null, CUR_RID = null, PEND_T = null;
+let TAB = 'jobs', RECS = [], SEGS = [], SPK = [], OPEN = null, CUR_RID = null, PEND_T = null;
 let VSEC = 'people', VPEOPLE = [], VPERSON = null, ERID = null, ECAND = null;
 let RSUM = null;      // /api/recordings/summary — список записей со спикерами
 let TR_AUDIO = true;  // у открытой в «Транскрипте» записи есть аудиофайл
@@ -427,13 +496,500 @@ AU.addEventListener('error', () => {
   showErr('аудио недоступно: ' + PLAYER.src);
 });
 
+// ---------- компонент «Фраза» (Utterance) ----------
+// Одна и та же реплика встречается в четырёх местах: лента транскрипта, разметка
+// записи, предложения и конфликты. Раньше каждое место рисовало её по-своему и
+// забывало половину действий — теперь рендер ОДИН, экраны отличаются только opts.
+//
+//   renderUtterance(u, opts) -> html
+//     u    — фраза в едином формате бэкенда:
+//            {id, recording_id, start_sec, end_sec, text, speaker_name, confidence,
+//             inherited, ambiguous, reason, detail, has_audio}
+//     opts — все поля необязательны:
+//            select  (true)          чекбокс массового выбора слева
+//            actions (true)          рисовать панель действий
+//            always  (u.ambiguous)   держать действия видимыми, а не по наведению
+//            confirm (speaker_name)  кого предлагает кнопка «✓ подтвердить»
+//            cluster (null)          метка кластера -> действие «ко всем «S1»»
+//            context (null)          строка-подпись сверху (html: запись, конфликт)
+//            link    (на транскрипт) hash для кнопки 🔗
+//            enroll  (длит. > 5с)    начальное состояние галочки «в эталоны»
+//            card    (false)         обвести карточкой (предложения, конфликты)
+//            cid     (null)          id конфликта в data-cid (для deep link)
+let UTT = {}, UOPT = {};        // id -> фраза и её opts: обработчики читают объект, а не DOM
+const SEL = new Set();          // выбранные фразы (массовые действия)
+
+const ANON = /^(s|speaker)[_ -]?(\d+|\?)$/i;
+const isAnon = n => ANON.test(String(n || '').trim());
+// Служебные метки из базы читаются по-человечески. ВАЖНО: фильтры, действия и запросы
+// работают по РЕАЛЬНОМУ значению (speaker_name), человеческое имя — только для показа.
+function speakerLabel(n){
+  const s = String(n == null ? '' : n).trim();
+  if (s === '[noise]') return 'фон / не речь';
+  if (/^(s|speaker)[_ -]?\?$/i.test(s)) return 'не определён';
+  if (isAnon(s)) return 'неизвестный (' + s + ')';
+  return s;
+}
+const isService = n => String(n || '').trim() === '[noise]' || isAnon(n);
+// служебной метке цветной хэш не нужен — это не человек
+const spkColOf = n => isService(n) ? 'var(--dim)' : spkCol(n);
+const REASONS = {
+  top2_close: 'два кандидата почти вровень — по голосу их не развести',
+  low_confidence: 'ни один эталон не похож достаточно уверенно',
+  cluster_mismatch: 'реплика не похожа на остальной кластер этого спикера',
+};
+const reasonTxt = r => r ? (REASONS[r] || r) : 'система не уверена в спикере';
+
+function renderUtterance(u, opts){
+  const o = opts || {};
+  UTT[u.id] = u; UOPT[u.id] = o;
+  const d = u.detail || {}, who = u.speaker_name || '';
+  const dur = Math.max(0, +u.end_sec - +u.start_sec);
+  const amb = !!u.ambiguous, sel = SEL.has(+u.id);
+  const always = (o.always === undefined) ? amb : !!o.always;
+  const name = o.confirm || who;
+  const link = o.link || ('transcript/' + u.recording_id + '/seg/' + u.id);
+  // «в эталоны» по умолчанию: длинный фрагмент годится, короткий даёт шумный вектор;
+  // у безымянного кластера (S1) эталонить некого — галочка снята
+  const enr = (o.enroll === undefined) ? (dur > 5 && !isService(name)) : !!o.enroll;
+  const okTitle = isService(name)
+    ? `Подтвердить, что это тот же голос, что и в остальном кластере ${esc(name)}: пометка «спорный» снимется, конфликт закроется. Имени человека реплика при этом не получит — для этого выберите его в списке справа.`
+    : `Подтвердить, что это ${esc(name)}. Реплика перестанет быть спорной, открытый конфликт закроется; с галочкой «в эталоны» фрагмент попадёт в эталоны этого человека.`;
+
+  const play = u.has_audio === false
+    ? '<button class="act" disabled title="аудиофайла записи нет на диске — слушать нечего">▶</button>'
+    : `<button class="act" data-act="uplay"
+         title="Слушать этот отрезок записи (${fmtT(u.start_sec)}–${fmtT(u.end_sec)}) через плеер в шапке. Повторный клик — стоп.">▶</button>`;
+
+  let bd = '';
+  if (isAnon(who))
+    bd += '<span class="badge bad" title="кластер голоса не связан с человеком из базы — имя ещё не назначено">не опознан</span>';
+  if (u.inherited)
+    bd += '<span class="badge" title="коротыш: спикер унаследован от соседней реплики, свой голос не считался">насл.</span>';
+  else if (u.confidence != null)
+    bd += `<span class="badge mono" style="color:${cohCol(u.confidence)};border-color:${cohCol(u.confidence)}"
+             title="уверенность в спикере — косинус к эталону голоса">${(+u.confidence).toFixed(2)}</span>`;
+  if (amb) bd += `<span class="badge bad" title="спорная реплика: ${esc(reasonTxt(u.reason))}">спорный</span>`;
+  if (d.resolution) bd += `<span class="badge ok" title="${esc(d.resolution)}">✓ подтверждён</span>`;
+  if (who === '[noise]') bd += '<span class="badge" title="помечена как шум/фон — в эталоны не идёт">🗑 шум</span>';
+  if (d.split_cos != null)
+    bd += `<span class="badge" title="реплика получена разрезом: косинус половин ${(+d.split_cos).toFixed(2)} — голоса разные">✂ разделена</span>`;
+
+  let acts = '';
+  if (o.actions !== false)
+    acts = `<div class="uacts">
+      <button class="act" data-act="uok" title="${okTitle}" data-base="✓ подтвердить">✓ подтвердить</button>
+      <label class="chk" title="Отмечено — фрагмент станет эталоном голоса: голос запомнится и будет узнаваться в следующих записях. Снято — сменится только имя спикера, база голосов не изменится.${
+        dur > 5 ? '' : ' По умолчанию снято: фрагмент короче 5с, эталон из него шумный.'}">
+        <input type="checkbox" data-role="enroll"${enr ? ' checked' : ''}> в эталоны</label>
+      <select data-role="who" title="Кому на самом деле принадлежит реплика — выберите человека из базы.">
+        <option value="">— другой человек —</option>${optList()}</select>
+      <button class="act" data-act="uassign"
+        title="Переназначить реплику выбранному слева человеку: имя сменится, спорность снимется, конфликт закроется. С галочкой «в эталоны» фрагмент уйдёт в его эталоны.">→</button>
+      <input data-role="newname" placeholder="новый человек" title="Имя человека, которого ещё нет в базе голосов.">
+      <button class="act" data-act="unew"
+        title="Завести нового человека с этим именем и отдать реплику ему. С галочкой «в эталоны» его голос сразу получит первый эталон.">+</button>
+      ${o.cluster ? `<button class="act" data-act="uall"
+        title="Применить выбранное имя ко ВСЕМ репликам «${esc(o.cluster)}» в этой записи, а не только к этой фразе.">ко всем «${esc(o.cluster)}»</button>` : ''}
+      <button class="act" data-act="unoise"
+        title="Шум, фон или чужой разговор: реплика получит метку [noise], эталон не создаётся, конфликт закрывается.">🗑</button>
+      <button class="act" data-act="usplit"
+        title="Разрезать фразу: система найдёт момент смены голоса и разделит реплику на две, каждой можно будет назначить своего спикера. Если смены голоса внутри нет — ничего не изменится и вы увидите почему.">✂</button>
+      ${linkBtn(link)}
+    </div>`;
+
+  let det = '';
+  if (Array.isArray(d.top) && d.top.length)
+    det = '<div class="udet">кандидаты: ' + d.top.map(t =>
+        `<span style="color:${spkCol(t.name)}">${esc(t.name)} ${(+t.cos).toFixed(2)}</span>`).join(' · ') +
+      (d.cluster_default ? ` · кластер: ${esc(d.cluster_default.name)} ${(+d.cluster_default.cos).toFixed(2)}` : '') +
+      '</div>';
+
+  const low = u.confidence != null && u.confidence < 0.7;
+  return `<div class="utt${amb ? ' amb' : ''}${always ? ' always' : ''}${o.card ? ' card' : ''}${sel ? ' sel' : ''}"
+      data-uid="${u.id}" data-rid="${u.recording_id}" data-t="${+u.start_sec}"${o.cid ? ` data-cid="${o.cid}"` : ''}>
+    ${o.context ? `<div class="uctx sub">${o.context}</div>` : ''}
+    <div class="urow">
+      ${o.select === false ? '' : `<input type="checkbox" class="usel" data-act="usel"${sel ? ' checked' : ''}
+        title="Выбрать фразу для массового действия — панель появится внизу экрана.">`}
+      ${play}
+      <span class="t mono" title="начало реплики в записи">${fmtT(u.start_sec)}</span>
+      <span class="badge mono" title="длительность реплики">${dur.toFixed(1)}с</span>
+      <span class="spk" style="color:${spkColOf(who)}"
+        title="спикер реплики${isService(who) ? ' (служебная метка в базе: ' + esc(who) + ')' : ''}">${esc(speakerLabel(who))}</span>
+      ${bd}
+      <span class="txt"${low ? ' style="opacity:.6"' : ''} title="asr_logprob: ${
+        u.asr_logprob != null ? (+u.asr_logprob).toFixed(3) : '—'}">${esc(u.text)}</span>
+      ${acts}
+    </div>${det}
+    <div class="ures sub"></div>
+  </div>`;
+}
+
+const uttEl = id => document.querySelector('.utt[data-uid="' + id + '"]');
+
+function errText(e){
+  const m = (e && e.message) || String(e || '');
+  // 'Failed to fetch' = сервер не ответил: чаще всего контейнер UI в этот момент
+  // перезапускался. Данные при этом не меняются — достаточно повторить действие.
+  if (/failed to fetch|networkerror|load failed/i.test(m))
+    return 'сервер не ответил (возможно, перезапускался) — нажмите ещё раз';
+  return m;
+}
+function uttNote(el, msg, color){
+  const r = el && el.querySelector('.ures');
+  if (!r) return;
+  r.style.color = color || '';
+  r.textContent = msg || '';
+}
+
+// экраны держат свои массивы — правим и их, иначе следующий рендер вернёт старое
+function syncUtt(u, extra){
+  const put = arr => {
+    const i = (arr || []).findIndex(x => +x.id === +u.id);
+    if (i >= 0) arr.splice(i, 1, ...(extra || [u]));
+  };
+  put(SEGS);
+  if (ECAND) (ECAND.groups || []).forEach(g => put(g.top));
+}
+
+// перерисовать карточку на месте, сохранив её opts
+function replaceUtt(id, u, extra){
+  const el = uttEl(id);
+  if (el) el.outerHTML = renderUtterance(u, Object.assign({}, UOPT[id] || {}, extra || {}));
+  syncUtt(u);
+  return uttEl(u.id);
+}
+
+// после любой правки спикера: список людей и сводка записей устарели
+function afterEdit(){ RSUM = null; loadPeople().catch(() => {}); }
+
+async function uttAct(btn, act){
+  const el = btn.closest('.utt');
+  if (!el) return;
+  const u = UTT[+el.dataset.uid];
+  if (!u) return;
+  if (act === 'uplay'){ playSpan(u.recording_id, u.start_sec, u.end_sec, btn); return; }
+  if (act === 'usplit'){ await splitUtt(el, u, btn); return; }
+  const box = el.querySelector('[data-role="enroll"]');
+  const want = !!(box && box.checked);
+  const pick = () => { const s = el.querySelector('[data-role="who"]'); return (s && s.value) || ''; };
+  let name = '', fresh = false;
+  if (act === 'uok'){
+    // если человек выбран в списке — подтверждаем ЕГО: иначе легко нажать «подтвердить»
+    // после выбора в списке и молча закрепить прежнего (неизвестного) спикера
+    name = pick() || (UOPT[u.id] || {}).confirm || u.speaker_name;
+  }
+  else if (act === 'unoise') name = '[noise]';
+  else if (act === 'uassign'){
+    name = pick();
+    if (!name){ uttNote(el, 'сначала выберите человека в списке', 'var(--red)'); return; }
+  } else if (act === 'unew'){
+    const inp = el.querySelector('[data-role="newname"]');
+    name = ((inp && inp.value) || '').trim(); fresh = true;
+    if (!name){ uttNote(el, 'введите имя нового человека', 'var(--red)'); return; }
+  } else if (act === 'uall'){
+    await clusterAll(el, u, pick() || (UOPT[u.id] || {}).confirm || u.speaker_name, want, btn);
+    return;
+  } else return;
+  await applyUtt(el, u, name, act === 'unoise' ? false : want, fresh, btn);
+}
+
+// одна фраза: сменить спикера (+ по желанию эталон), снять спорность, закрыть конфликт
+async function applyUtt(el, u, name, enroll, fresh, btn){
+  const old = btn ? btn.innerHTML : '';
+  if (btn){ btn.disabled = true; btn.innerHTML = '…'; }
+  uttNote(el, 'работаю…');
+  try {
+    if (fresh) await api('/api/speakers', {method:'POST', body:{name}});   // человека ещё нет в базе
+    const r = await api('/api/enroll/confirm_segment', {method:'POST',
+      body:{segment_id: u.id, name, enroll: !!enroll}});
+    const nu = r.utterance || Object.assign({}, u, {speaker_name: name, ambiguous: false});
+    const box = replaceUtt(u.id, nu);
+    let msg = name === '[noise]'
+      ? 'помечено как шум/фон — эталон не создан, конфликт закрыт'
+      : (r.enrolled
+          ? `спикер: ${name} · эталонов стало ${r.samples_total} (${r.active} активных)` +
+            (r.coherence != null ? ` · когерентность нового ${cohTxt(r.coherence)}` : '')
+          : `спикер: ${name} · эталон не создавался`);
+    if (r.enroll_error) msg += ' · эталон не вышел: ' + r.enroll_error;
+    uttNote(box || el, msg, r.enroll_error ? 'var(--yellow)' : 'var(--green)');
+    afterEdit();
+  } catch (e){
+    if (btn){ btn.disabled = false; btn.innerHTML = old; }
+    uttNote(el, 'не вышло: ' + errText(e), 'var(--red)');
+  }
+}
+
+// весь кластер одной записи (Предложения: «назвать неизвестных»)
+async function clusterAll(el, u, name, enroll, btn){
+  const label = (UOPT[u.id] || {}).cluster || u.speaker_name;
+  if (!name){ uttNote(el, 'сначала выберите человека в списке', 'var(--red)'); return; }
+  const old = btn ? btn.innerHTML : '';
+  if (btn){ btn.disabled = true; btn.innerHTML = '…'; }
+  uttNote(el, 'работаю…');
+  let msg = '';
+  try {
+    if (enroll && name !== '[noise]'){
+      try {
+        const e = await api('/api/enroll', {method:'POST', body:{recording_id: u.recording_id,
+          start_sec: u.start_sec, end_sec: u.end_sec, speaker_name: name, mode:'existing'}});
+        msg = ` · эталонов у ${name}: ${e.samples_total} (${e.active} активных)`;
+      } catch (err){ msg = ' · эталон создать не вышло'; }
+    }
+    const r = await api('/api/enroll/rename_cluster', {method:'POST',
+      body:{recording_id: u.recording_id, from_label: label, to_name: name}});
+    uttNote(el, `переименовано реплик: ${r.updated}` +
+      (r.conflicts_closed ? `, закрыто конфликтов: ${r.conflicts_closed}` : '') + msg, 'var(--green)');
+    afterEdit();
+  } catch (e){
+    if (btn){ btn.disabled = false; btn.innerHTML = old; }
+    uttNote(el, 'не вышло: ' + errText(e), 'var(--red)');
+  }
+}
+
+// ✂ разрезать фразу по месту смены голоса; при отказе объясняем причину
+async function splitUtt(el, u, btn){
+  const old = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '…';
+  uttNote(el, 'ищу момент смены голоса…');
+  try {
+    const r = await api('/api/segments/' + u.id + '/split', {method:'POST'});
+    if (!r.split){
+      btn.disabled = false; btn.innerHTML = old;
+      uttNote(el, 'разрез не сделан: ' + r.reason, 'var(--yellow)');
+      return;
+    }
+    const o = Object.assign({}, UOPT[u.id] || {}, {always: true, confirm: null, link: null, cid: null});
+    // на месте старой карточки — обе половины, обе подсвечены и ждут своего спикера
+    el.outerHTML = r.segments.map(s => renderUtterance(s, o)).join('');
+    syncUtt(u, r.segments);
+    r.segments.forEach(s => { const n = uttEl(s.id); if (n) n.classList.add('hl'); });
+    setTimeout(() => r.segments.forEach(s => { const n = uttEl(s.id); if (n) n.classList.remove('hl'); }), 8000);
+    uttNote(uttEl(r.segments[0].id),
+      `разрезано на ${fmtT(r.cut_sec)}: косинус половин ${(+r.cos).toFixed(2)} — голоса разные. Назначьте спикера каждой половине.`,
+      'var(--green)');
+    afterEdit();
+  } catch (e){
+    btn.disabled = false; btn.innerHTML = old;
+    uttNote(el, 'не вышло: ' + errText(e), 'var(--red)');
+  }
+}
+
+// ---------- фильтры над списком фраз ----------
+// Один и тот же фильтр работает на всех четырёх экранах: данные уже загружены,
+// поэтому фильтрация мгновенная и целиком на клиенте. Состояние живёт в хэше
+// (#voices/enroll/4?f=amb&spk=S1&min=5&q=...), чтобы ссылку можно было переслать.
+const FLT_DEF = () => ({state:'all', spk:'', min:0, q:''});
+let FLT = FLT_DEF();
+let SCREEN = null;      // {bar, items, draw} — активный список фраз на экране
+let FQ_T = null;        // дебаунс поиска по тексту
+
+// сравнение идёт по РЕАЛЬНОМУ speaker_name из базы, а не по человекочитаемой подписи
+function fltPass(u){
+  const d = u.detail || {};
+  if (FLT.state === 'amb' && !u.ambiguous) return false;
+  if (FLT.state === 'ok' && !d.resolution) return false;
+  if (FLT.state === 'noise' && u.speaker_name !== '[noise]') return false;
+  if (FLT.spk && u.speaker_name !== FLT.spk) return false;
+  if (FLT.min && (+u.end_sec - +u.start_sec) < FLT.min) return false;
+  if (FLT.q && !String(u.text || '').toLowerCase().includes(FLT.q)) return false;
+  return true;
+}
+const fltOn = () => FLT.state !== 'all' || FLT.spk || FLT.min || FLT.q;
+
+function fltSuffix(){
+  const p = [];
+  if (FLT.state !== 'all') p.push('f=' + FLT.state);
+  if (FLT.spk) p.push('spk=' + encodeURIComponent(FLT.spk));
+  if (FLT.min) p.push('min=' + FLT.min);
+  if (FLT.q) p.push('q=' + encodeURIComponent(FLT.q));
+  return p.length ? '?' + p.join('&') : '';
+}
+
+function fltFrom(qs){
+  const f = FLT_DEF();
+  (qs || '').split('&').forEach(kv => {
+    const i = kv.indexOf('=');
+    if (i < 0) return;
+    const k = kv.slice(0, i);
+    let v = kv.slice(i + 1).replace(/\+/g, ' ');
+    try { v = decodeURIComponent(v); } catch (e) {}
+    if (k === 'f' && ['all','amb','ok','noise'].includes(v)) f.state = v;
+    else if (k === 'spk') f.spk = v;
+    else if (k === 'min') f.min = +v || 0;
+    else if (k === 'q') f.q = v.toLowerCase();
+  });
+  return f;
+}
+
+const MINS = [0, 3, 5, 10];
+
+function fltBar(items){
+  const names = [...new Set(items.map(u => u.speaker_name))].sort();
+  return `<div class="fbar">
+    <div class="fseg" id="fState"></div>
+    <select id="fSpk" title="Показывать только реплики одного спикера. Фильтр работает по значению из базы, даже если подпись человеческая.">
+      <option value="">все спикеры</option>${names.map(n =>
+        `<option value="${esc(n)}"${FLT.spk === n ? ' selected' : ''}>${esc(speakerLabel(n))}</option>`).join('')}</select>
+    <div class="fseg" id="fMin" title="Короткие обрывки бесполезны как эталон голоса — их можно скрыть">${
+      MINS.map(m => `<button data-act="fmin" data-m="${m}" class="${FLT.min === m ? 'on' : ''}"
+        title="${m ? 'показывать только реплики длиннее ' + m + ' секунд' : 'показывать реплики любой длины'}">${
+        m ? '>' + m + 'с' : 'любые'}</button>`).join('')}</div>
+    <input id="fQ" placeholder="поиск по тексту" value="${esc(FLT.q)}"
+      title="Показывать только реплики, в тексте которых есть эта подстрока (регистр не важен)">
+    <span class="dim" id="fCount"></span>
+    <span class="dim keys" style="font-size:11px">↑↓ — по фразам · Space — послушать</span>
+  </div>`;
+}
+
+// счётчики состояний считаются по ВСЕМУ списку, а не по показанному
+function fltStats(items, shown){
+  const el = $('fState');
+  if (!el) return;
+  const c = {all: items.length, amb: 0, ok: 0, noise: 0};
+  items.forEach(u => {
+    if (u.ambiguous) c.amb++;
+    if ((u.detail || {}).resolution) c.ok++;
+    if (u.speaker_name === '[noise]') c.noise++;
+  });
+  const btn = (k, label, cls, title) => (c[k] || FLT.state === k)
+    ? `<button data-act="fstate" data-f="${k}" class="${FLT.state === k ? 'on' : ''}" title="${title}">${label}${
+        k === 'all' ? '' : ` <span class="badge ${cls}">${c[k]}</span>`}</button>` : '';
+  el.innerHTML =
+    btn('all', 'все', '', 'показать все фразы списка') +
+    btn('amb', 'спорные', 'bad', 'только те, где система не уверена в спикере — их и надо разобрать') +
+    btn('ok', 'подтверждённые', 'ok', 'только те, по которым решение уже принято человеком') +
+    btn('noise', 'шум', '', 'только помеченные как фон / не речь');
+  const cn = $('fCount');
+  if (cn) cn.textContent = `показано ${shown} из ${items.length}`;
+}
+
+// экран отдаёт свой список и функцию отрисовки (она сама зовёт fltPass)
+function fltMount(bar, items, draw){
+  SCREEN = {bar, items, draw};
+  if (bar) bar.innerHTML = items.length ? fltBar(items) : '';
+  fltRedraw();
+}
+
+function fltRedraw(){
+  if (!SCREEN) return;
+  const shown = SCREEN.draw() || 0;
+  fltStats(SCREEN.items, shown);
+}
+
+function fltApply(){
+  setHash(curHash().split('?')[0], false);      // состояние фильтра — в ссылке
+  const s = $('fSpk'); if (s) s.value = FLT.spk;
+  document.querySelectorAll('#fMin button').forEach(b => b.classList.toggle('on', +b.dataset.m === FLT.min));
+  fltRedraw();
+}
+
+// ---------- клавиатура: разбор длинного списка без мыши ----------
+let CUR_U = null;
+
+function uttCur(el){
+  document.querySelectorAll('.utt.cur').forEach(x => x.classList.remove('cur'));
+  CUR_U = el ? +el.dataset.uid : null;
+  if (!el) return;
+  el.classList.add('cur');
+  try { el.scrollIntoView({behavior:'smooth', block:'center'}); } catch (e) { el.scrollIntoView(); }
+}
+
+// ходим по тому, что реально видно на экране, — то есть по текущему фильтру
+function uttStep(dir){
+  const list = [...document.querySelectorAll('.utt')];
+  if (!list.length) return;
+  const i = list.findIndex(el => +el.dataset.uid === CUR_U);
+  uttCur(list[i < 0 ? (dir > 0 ? 0 : list.length - 1)
+                    : Math.min(list.length - 1, Math.max(0, i + dir))]);
+}
+
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  const t = e.target;
+  if (t && t.closest && t.closest('input,select,textarea,button,[contenteditable]')) return;
+  if (e.key === 'ArrowDown'){ e.preventDefault(); uttStep(1); }
+  else if (e.key === 'ArrowUp'){ e.preventDefault(); uttStep(-1); }
+  else if (e.key === ' ' || e.key === 'Spacebar'){
+    const el = (CUR_U != null && uttEl(CUR_U)) || document.querySelector('.utt');
+    if (!el) return;
+    e.preventDefault();
+    if (CUR_U == null || !uttEl(CUR_U)) uttCur(el);
+    const b = el.querySelector('[data-act="uplay"]');
+    if (b) b.click(); else showErr('у этой фразы нет доступного аудио');
+  }
+});
+
+// ---------- массовые действия ----------
+function bulkSync(){
+  const n = SEL.size;
+  document.body.classList.toggle('bulk', n > 0);
+  $('bulkBar').style.display = n ? '' : 'none';
+  if (!n) return;
+  $('bulkN').textContent = 'выбрано ' + plural(n, 'фраза', 'фразы', 'фраз');
+  const sel = $('bulkWho'), cur = sel.value;
+  sel.innerHTML = '<option value="">— кому отдать —</option>' + optList();
+  if (cur) sel.value = cur;
+  bulkWhat();
+}
+
+// панель обязана заранее сказать, что именно случится с выбранными фразами
+function bulkWhat(){
+  const n = SEL.size, who = $('bulkWho').value, ph = plural(n, 'фраза', 'фразы', 'фраз');
+  $('bulkWhat').textContent = who
+    ? `${ph} получат спикера «${who}», пометка «спорный» снимется, открытые конфликты закроются` +
+      ($('bulkEnroll').checked ? '; самая длинная из выбранных уйдёт в эталоны голоса'
+                               : '; эталоны голоса не создаются')
+    : `выберите человека — тогда ${ph} получат его имя; либо нажмите «мусор / фон»`;
+}
+
+function clearSel(){ SEL.clear(); document.querySelectorAll('.utt.sel').forEach(el => {
+  el.classList.remove('sel'); const c = el.querySelector('.usel'); if (c) c.checked = false; }); bulkSync(); }
+
+async function bulkApply(name){
+  const ids = [...SEL];
+  if (!ids.length) return;
+  const ph = plural(ids.length, 'фразу', 'фразы', 'фраз');
+  const what = name === '[noise]'
+    ? `пометить ${ph} как шум/фон`
+    : `назначить спикера «${name}» на ${ph}`;
+  // много реплик разом — это трудно откатить, поэтому переспрашиваем
+  if (ids.length > 10 && !confirm(`Подтвердите: ${what}.\nЭто затронет ${ids.length} реплик и закроет их конфликты.`))
+    return;
+  const enroll = name !== '[noise]' && $('bulkEnroll').checked;
+  try {
+    const r = await api('/api/segments/bulk', {method:'POST', body:{ids, name, enroll}});
+    SEL.clear(); bulkSync();
+    showErr(`готово: обновлено ${r.updated}` +
+      (r.conflicts_closed ? `, закрыто конфликтов ${r.conflicts_closed}` : '') +
+      (r.enrolled ? `, эталонов у ${name}: ${r.enrolled.samples_total}` : ''));
+    afterEdit();
+    await refreshScreen();
+  } catch (e){}
+}
+
+// перечитать тот экран, на котором пользователь сейчас стоит
+async function refreshScreen(){
+  if (TAB === 'tr' && CUR_RID != null){ const r = CUR_RID; CUR_RID = null; await loadSegments(r); }
+  else if (TAB === 'voices' && VSEC === 'enroll' && ERID != null) await loadCandidates(ERID);
+  else if (TAB === 'voices' && VSEC === 'sugg') await loadSugg();
+  else if (TAB === 'sp') await loadSp();
+  else if (TAB === 'jobs') await loadJobs();
+}
+
 // ---------- роутер ----------
 const TAB_HASH = {jobs:'jobs', tr:'transcript', voices:'voices', disk:'disk', sp:'speakers', usage:'usage'};
 let LAST_HASH = null, ROUTING = false, NEXT = null;
 
 const curHash = () => location.hash.replace(/^#/, '');
 
+// «экран» для переноса фильтра: transcript/3 и transcript/3/seg/42 — один и тот же список,
+// а jobs или voices/suggestions — уже другой, туда чужой фильтр тащить незачем
+const screenKey = h => String(h || '').split('?')[0].replace(/^\/+/, '').split('/').slice(0, 2).join('/');
+
 function setHash(h, push){
+  if (!h.includes('?') && screenKey(h) === screenKey(LAST_HASH)) h += fltSuffix();
   LAST_HASH = h;
   if (curHash() === h) return;
   try { history[push ? 'pushState' : 'replaceState'](null, '', '#' + h); }
@@ -441,6 +997,14 @@ function setHash(h, push){
 }
 
 function parseHash(h){
+  const raw = String(h || '');
+  const qi = raw.indexOf('?');
+  const r = parsePath(qi < 0 ? raw : raw.slice(0, qi));
+  r.flt = fltFrom(qi < 0 ? '' : raw.slice(qi + 1));
+  return r;
+}
+
+function parsePath(h){
   let s = '';
   try { s = decodeURIComponent(h || ''); } catch (e) { s = h || ''; }
   s = s.replace(/^\/+|\/+$/g, '');
@@ -463,6 +1027,7 @@ function parseHash(h){
     if (p[1] === 'enroll')
       return {tab:'voices', vsec:'enroll', rid: /^\d+$/.test(p[2] || '') ? +p[2] : null};
     if (p[1] === 'suggestions') return {tab:'voices', vsec:'sugg'};
+    if (p[1] === 'unknown') return {tab:'voices', vsec:'unknown'};
     return {tab:'voices', vsec:'people', spId: /^\d+$/.test(p[1] || '') ? +p[1] : null};
   }
   if (p[0] === 'conflicts')
@@ -500,6 +1065,9 @@ window.addEventListener('popstate', onHashNav);
 
 async function showTab(r, hl){
   TAB = r.tab;
+  FLT = r.flt || FLT_DEF();                   // фильтр приезжает из хэша до отрисовки списка
+  SCREEN = null; CUR_U = null;
+  if (SEL.size){ SEL.clear(); bulkSync(); }   // выбор фраз не переносим между экранами
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === TAB));
   document.querySelectorAll('.tab').forEach(s => s.style.display = (s.id === 'tab-' + TAB) ? '' : 'none');
   if (TAB === 'jobs'){
@@ -517,7 +1085,7 @@ async function showTab(r, hl){
   } else if (TAB === 'sp'){
     await loadSp();
     if (r.confId != null){
-      const el = document.querySelector('.card[data-cid="' + r.confId + '"]');
+      const el = document.querySelector('[data-cid="' + r.confId + '"]');
       if (el) focusEl(el, true);
       else { $('confNote').textContent = 'конфликт #' + r.confId + ' не в списке открытых (уже разобран?)'; focusEl($('confHead'), false); }
     } else if (r.toConf) focusEl($('confHead'), false);
@@ -531,6 +1099,7 @@ async function loadCosts(){
 }
 
 async function loadJobs(){
+  loadProgress().catch(() => {});      // сводка сверху обновляется вместе со списком
   try { RECS = await api('/api/recordings'); }
   catch (e) {
     $('jobsBody').innerHTML = '<tr><td colspan="11" class="errtxt">ошибка загрузки: ' +
@@ -555,7 +1124,7 @@ function renderJobs(){
       <td class="mono">${r.segments}</td>
       <td class="mono${r.open_conflicts > 0 ? ' errtxt' : ' dim'}">${r.open_conflicts}</td>
       <td class="mono">${fmtUsd(r.cost_usd)}</td>
-      <td class="dim mono">${fmtDT(r.created_at)}</td>
+      <td class="dim mono" title="добавлена в базу: ${fmtDT(r.created_at)}">${fmtDT(r.started_at || r.created_at)}</td>
       <td>${linkBtn('jobs/' + r.id)}</td></tr>`;
     if (OPEN === r.id)
       h += `<tr><td colspan="11"><div id="recdet" class="dim">загрузка…</div></td></tr>`;
@@ -685,61 +1254,29 @@ async function loadSegments(rid){
   if (!rid){ CUR_RID = null; return; }
   $('trWrap').style.display = '';
   $('segList').innerHTML = '<div class="dim">загрузка…</div>';
-  let segs, confs, spk, sum;
+  let segs, spk, sum;
   try {
-    [segs, confs, spk, sum] = await Promise.all([
+    // конфликты приезжают вместе с сегментами (conflict_id/reason) — отдельный запрос не нужен
+    [segs, spk, sum] = await Promise.all([
       api('/api/recordings/' + rid + '/segments'),
-      api('/api/conflicts?status=open'),
       api('/api/speakers'),
       RSUM ? Promise.resolve(RSUM) : api('/api/recordings/summary'),
     ]);
   } catch (e) { fail($('segList'), e); return; }
-  SEGS = segs; SPK = spk; CUR_RID = rid; RSUM = sum;
-  CONF_BY_SEG = {};
-  confs.forEach(c => { CONF_BY_SEG[String(c.segment_id)] = c.id; });
+  SEGS = segs; SPK = spk; VPEOPLE = spk; CUR_RID = rid; RSUM = sum;
   const rec = RSUM.find(x => x.id === rid);
   TR_AUDIO = !rec || rec.has_audio !== false;
   $('trHead').innerHTML = trHead(rec);
   // подкладываем запись в общий плеер (не перебивая то, что уже играет)
   if (TR_AUDIO) preload(recSrc(rid), recLabel(rid));
-  $('segList').innerHTML = SEGS.map(segHtml).join('') ||
-    '<div class="dim">сегментов нет — запись ещё не прошла конвейер</div>';
-}
-
-function segHtml(s, i){
-  const low = s.confidence != null && s.confidence < 0.7;
-  let badges = '';
-  if (s.confidence != null) badges += `<span class="badge${low ? ' bad' : ''}">${(+s.confidence).toFixed(2)}</span>`;
-  if (s.inherited) badges += '<span class="badge">насл.</span>';
-  const tog = s.ambiguous ? `<button class="act" data-act="tog" data-i="${i}">разбор</button>` : '';
-  return `<div class="seg${s.ambiguous ? ' amb' : ''}" data-t="${+s.start_sec}" data-id="${s.id}" data-i="${i}">
-      <span class="t">${fmtT(s.start_sec)}</span>
-      <span class="spk" style="color:${spkCol(s.speaker_name)}">${esc(s.speaker_name)}</span>
-      ${badges}
-      <span class="txt"${low ? ' style="opacity:.55"' : ''} title="asr_logprob: ${s.asr_logprob != null ? (+s.asr_logprob).toFixed(3) : '—'}">${esc(s.text)}</span>
-      ${tog}${linkBtn('transcript/' + CUR_RID + '/seg/' + s.id)}
-    </div>` + (s.ambiguous ? panelHtml(s, i) : '');
-}
-
-function panelHtml(s, i){
-  const d = s.detail || {}, cid = CONF_BY_SEG[String(s.id)];
-  let h = `<div class="pan" id="pan${i}" style="display:none">`;
-  if (Array.isArray(d.top) && d.top.length)
-    h += '<div class="cand">top: ' + d.top.map(t =>
-      `<span style="color:${spkCol(t.name)}">${esc(t.name)} · cos ${(+t.cos).toFixed(2)}</span>`).join('') + '</div>';
-  if (d.cluster_default)
-    h += `<div class="dim">cluster_default: ${esc(d.cluster_default.name)} · ${(+d.cluster_default.cos).toFixed(2)}</div>`;
-  if (d.resolution) h += `<div class="dim">resolution: ${esc(d.resolution)}</div>`;
-  if (cid) h += resolveRow(cid);
-  else h += '<div class="dim">открытого конфликта нет</div>';
-  return h + '</div>';
-}
-
-function resolveRow(cid){
-  return '<div class="rsrow">' +
-    SPK.map((p, n) => `<button class="act" data-act="rs" data-cid="${cid}" data-n="${n}" style="color:${spkCol(p.name)}">${esc(p.name)}</button>`).join('') +
-    `<input placeholder="новое имя"><button class="act" data-act="rsnew" data-cid="${cid}">OK</button>` +
-    linkBtn('conflicts/' + cid) + '</div>';
+  // экран 1: все фразы записи подряд, одним компонентом
+  fltMount($('trFilter'), SEGS, () => {
+    const rows = SEGS.filter(fltPass);
+    $('segList').innerHTML = rows.map(u => renderUtterance(u, {})).join('') ||
+      (SEGS.length ? '<div class="dim">под фильтр не подошла ни одна фраза</div>'
+                   : '<div class="dim">сегментов нет — запись ещё не прошла конвейер</div>');
+    return rows.length;
+  });
 }
 
 // перемотка без запуска — только если в плеере действительно эта запись
@@ -774,17 +1311,7 @@ function jumpTo(r){
   if (t != null) seekOnly(t);
   showHint(t);
   if (!s) return;
-  const el = document.querySelector('.seg[data-id="' + s.id + '"]');
-  focusEl(el, true);
-  if (s.ambiguous && el){ const p = $('pan' + el.dataset.i); if (p) p.style.display = ''; }
-}
-
-async function resolveConflict(cid, name){
-  await api('/api/conflicts/' + cid + '/resolve', {method: 'POST', body: {name}});
-  RSUM = null;   // изменилось число спорных сегментов — сводку перечитать
-  if (TAB === 'tr' && CUR_RID != null){ const r = CUR_RID; CUR_RID = null; await loadSegments(r); }
-  if (TAB === 'sp') loadSp().catch(() => {});
-  if (TAB === 'jobs') loadJobs().catch(() => {});
+  focusEl(uttEl(s.id), true);
 }
 
 // ---------- Голоса ----------
@@ -798,11 +1325,51 @@ async function showVoices(r){
   } else if (VSEC === 'enroll'){
     if (!VPEOPLE.length) await loadPeople();
     await initEnroll(r.rid);
+  } else if (VSEC === 'unknown'){
+    if (!VPEOPLE.length) await loadPeople();
+    await loadUnknown();
   } else {
     if (!VPEOPLE.length) await loadPeople();
     await loadSugg();
   }
 }
+
+// Кого не хватает в базе: неопознанные голоса, сведённые по всей базе записей.
+// Высокая близость к известному человеку означает не нового участника, а промах
+// опознания — тогда правильное действие «добавить эталон», а не «завести человека».
+async function loadUnknown(){
+  const box = $('unkBody');
+  box.innerHTML = '<div class="dim">считаю по всей базе…</div>';
+  let d;
+  try { d = await api('/api/speakers/unknown'); } catch (e) { fail(box, e); return; }
+  if (!d.groups.length){ box.innerHTML = '<div class="dim">неопознанных голосов не нашлось</div>'; return; }
+  box.innerHTML = d.groups.map((g, i) => {
+    const near = g.closest.map(c => `${esc(c.name)} <b>${c.cos}</b>`).join(' · ');
+    const verdict = g.likely_known
+      ? `<span style="color:var(--yellow)">похоже, это ${esc(g.closest[0].name)} — не хватает эталона</span>`
+      : `<span style="color:var(--green)">похоже, новый человек</span>`;
+    const s = g.sample;
+    return `<div class="card" style="margin-bottom:10px">
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:baseline">
+        <b>${g.minutes} мин речи</b>
+        <span class="dim">${g.segments} реплик · записей: ${g.rec_count}</span>
+        ${verdict}
+      </div>
+      <div class="dim" style="font-size:12px;margin-top:4px">ближайшие: ${near}</div>
+      <div style="margin-top:6px">«${esc(s.text)}»</div>
+      <div class="rsrow" style="margin-top:6px">
+        <button class="act" data-act="unkplay" data-rid="${s.recording_id}"
+          data-start="${s.start}" data-end="${s.end}">▶ послушать</button>
+        <button class="act" data-act="goto"
+          data-h="voices/enroll/${s.recording_id}?spk=${encodeURIComponent(g.labels[0].split(' ')[1] || '')}">
+          разметить эту запись →</button>
+        ${g.likely_known ? '' : `<button class="act" data-act="unknew" data-i="${i}">+ завести человека</button>`}
+      </div>
+    </div>`;
+  }).join('');
+  UNK = d.groups;
+}
+let UNK = [];
 
 async function loadPeople(){
   try { VPEOPLE = await api('/api/speakers'); }
@@ -884,22 +1451,11 @@ function renderCandidates(){
       <div class="sub" style="margin-top:4px">${g.match.length
         ? 'матч по базе: ' + g.match.map(m => `${esc(m.name)} <b style="color:${cohCol(m.cos)}">${(+m.cos).toFixed(2)}</b>`).join(' · ')
         : esc(g.match_error || 'база эталонов пуста')}</div>
-      <div style="margin:8px 0">${g.top.map((t, ti) => `
-        <div class="frag${t.ambiguous ? ' amb' : ''}"${ti >= 8 ? ' data-extra="1" style="display:none"' : ''}>
-          <button class="act" data-act="vspan" data-rid="${d.recording_id}" data-s="${t.start_sec}" data-e="${t.end_sec}"${off}>▶</button>
-          <span class="t">${fmtT(t.start_sec)}</span>
-          <span class="badge">${(t.end_sec - t.start_sec).toFixed(1)}с</span>
-          ${t.confidence != null ? `<span class="badge" style="color:${cohCol(t.confidence)}" title="уверенность в спикере">${(+t.confidence).toFixed(2)}</span>` : ''}
-          ${t.ambiguous ? `<span class="badge bad" title="${esc(t.reason || 'неуверенно')}">спорный</span>
-            <button class="act" data-act="econf" data-seg="${t.id}" data-i="${i}"
-              title="да, это ${esc(g.label)} — фрагмент станет эталоном голоса">✓ это ${esc(g.label)}</button>
-            <select data-role="other" style="max-width:150px"><option value="">— другой человек —</option>${optList()}</select>
-            <button class="act" data-act="eother" data-seg="${t.id}"
-              title="эта реплика принадлежит другому человеку — переназначить и сделать его эталоном">→</button>
-            <button class="act" data-act="enoise" data-seg="${t.id}"
-              title="шум/фон/чужой разговор — пометить и не эталонить">🗑</button>` : ''}
-          <span class="txt">${esc(t.text)}</span>
-        </div>`).join('') || '<span class="dim">фрагментов нет</span>'}
+      <div style="margin:8px 0">${g.top.map((t, ti) => {
+        // экран 2: те же карточки фраз, «подтвердить» предлагает метку кластера
+        const h = renderUtterance(t, {confirm: g.label});
+        return ti >= 8 ? `<div data-extra="1" style="display:none">${h}</div>` : h;
+      }).join('') || '<span class="dim">фрагментов нет</span>'}
         ${g.top.length > 8 ? `<button class="act" data-act="vmore" data-i="${i}">показать все ${g.top.length}</button>` : ''}</div>
       <div class="rsrow">
         <select data-role="who"><option value="">— кто это? —</option>${optList()}</select>
@@ -920,13 +1476,15 @@ async function enrollAct(card, kind){
   // в эталон идёт самый длинный НЕспорный фрагмент (его выбрал бэкенд), а не просто первый
   const g = ECAND.groups[+card.dataset.i], res = card.querySelector('.eres'),
         best = g.enroll_span || g.top.find(t => !t.ambiguous) || g.top[0];
+  // поля берём ИЗ СТРОКИ КЛАСТЕРА: у каждой фразы внутри карточки свой [data-role="who"]
+  const row = card.querySelector('.rsrow');
   let name = '', mode = 'existing', aliases = [];
   if (kind === 'who'){
-    name = card.querySelector('[data-role="who"]').value;
+    name = row.querySelector('[data-role="who"]').value;
     if (!name){ res.textContent = 'выберите человека в списке'; return; }
   } else if (kind === 'new'){
-    name = card.querySelector('[data-role="nname"]').value.trim();
-    aliases = card.querySelector('[data-role="nalias"]').value.split(',').map(s => s.trim()).filter(Boolean);
+    name = row.querySelector('[data-role="nname"]').value.trim();
+    aliases = row.querySelector('[data-role="nalias"]').value.split(',').map(s => s.trim()).filter(Boolean);
     mode = 'new_speaker';
     if (!name){ res.textContent = 'введите имя'; return; }
   } else {
@@ -952,7 +1510,7 @@ async function enrollAct(card, kind){
     loadPeople().catch(() => {});
   } catch (e) {
     res.style.color = 'var(--red)';
-    res.textContent = 'не вышло: ' + ((e && e.message) || e);
+    res.textContent = 'не вышло: ' + errText(e);
   }
 }
 
@@ -961,30 +1519,16 @@ async function loadSugg(){
   $('suggBody').innerHTML = '<div class="dim">загрузка…</div>';
   let d;
   try { d = await api('/api/enroll/suggestions'); } catch (e) { fail($('suggBody'), e); return; }
-  const span = s => `<button class="act" data-act="vspan" data-rid="${s.recording_id}" data-s="${s.start_sec}" data-e="${s.end_sec}"${
-    s.has_audio === false ? ' disabled title="аудио недоступно"' : ''}>▶</button>`;
-  const head = s => `<div class="sub">запись #${s.recording_id} «${esc(s.rec_title)}» · ${fmtT(s.start_sec)}–${fmtT(s.end_sec)}` +
-    ` · ${(s.end_sec - s.start_sec).toFixed(1)}с${s.confidence != null ? ' · cos ' + (+s.confidence).toFixed(2) : ''}</div>`;
+  // экран 3: те же карточки фраз; отличается только подпись сверху и что предлагается
+  const head = s => `запись #${s.recording_id} «${esc(s.rec_title)}» · ${fmtT(s.start_sec)}–${fmtT(s.end_sec)} ` +
+    `<button class="lnk" data-act="goto" data-h="voices/enroll/${s.recording_id}"
+       title="уйти на экран разметки этой записи — там видно все фрагменты кластера">разметка записи ↗</button>`;
 
-  const unnamed = d.unnamed.map(s => `<div class="card" style="width:100%">
-      ${head(s)}
-      <div style="margin:4px 0"><b style="color:${spkCol(s.speaker_name)}">${esc(s.speaker_name)}</b>: «${esc(s.text)}»</div>
-      <div class="rsrow">${span(s)}
-        <select data-role="who"><option value="">— кто это? —</option>${optList()}</select>
-        <button class="act" data-act="sname" data-rid="${s.recording_id}" data-label="${esc(s.speaker_name)}" data-s="${s.start_sec}" data-e="${s.end_sec}"
-          title="переименует ВСЕ реплики ${esc(s.speaker_name)} в этой записи и запомнит голос для будущих записей">применить ко всем «${esc(s.speaker_name)}» в записи</button>
-        <button class="lnk" data-act="goto" data-h="voices/enroll/${s.recording_id}"
-          title="уйти на экран разметки этой записи — там видно все фрагменты кластера">открыть разметку записи ↗</button>
-        ${linkBtn('transcript/' + s.recording_id + '/seg/' + s.id)}</div>
-      <div class="eres sub" style="margin-top:6px"></div></div>`).join('');
+  const unnamed = d.unnamed.map(s => renderUtterance(s, {
+    card: true, always: true, context: head(s), cluster: s.speaker_name})).join('');
 
-  const enrich = d.enrich.map(s => `<div class="card" style="width:100%">
-      ${head(s)}
-      <div style="margin:4px 0"><b style="color:${spkCol(s.speaker_name)}">${esc(s.speaker_name)}</b>: «${esc(s.text)}»</div>
-      <div class="rsrow">${span(s)}
-        <button class="act" data-act="sadd" data-rid="${s.recording_id}" data-name="${esc(s.speaker_name)}" data-s="${s.start_sec}" data-e="${s.end_sec}">в эталоны ${esc(s.speaker_name)}</button>
-        ${linkBtn('transcript/' + s.recording_id + '/seg/' + s.id)}</div>
-      <div class="eres sub" style="margin-top:6px"></div></div>`).join('');
+  const enrich = d.enrich.map(s => renderUtterance(s, {
+    card: true, always: true, context: head(s), enroll: true})).join('');
 
   const bad = d.bad_samples.map(s => `<div class="card" style="width:100%">
       <div class="sub">${esc(s.kind)} · ${s.duration_sec != null ? (+s.duration_sec).toFixed(1) + 'с' : '—'} · ${esc(s.source || '')}</div>
@@ -1002,30 +1546,6 @@ async function loadSugg(){
       (enrich || '<div class="dim">пусто</div>') +
     `<h3>Исключить плохой сэмпл <span class="dim">— активные эталоны с когерентностью ниже 0.5</span></h3>` +
       (bad || '<div class="dim">пусто — мусорных эталонов нет</div>');
-}
-
-async function suggEnroll(card, rid, name, s, e, label){
-  const res = card.querySelector('.eres');
-  res.style.color = ''; res.textContent = 'работаю…';
-  try {
-    const r = await api('/api/enroll', {method:'POST', body:{
-      recording_id: +rid, start_sec: +s, end_sec: +e, speaker_name: name, mode: 'existing'}});
-    let msg = `стало ${r.samples_total} сэмплов (${r.active} активных) · coherence нового ${cohTxt(r.coherence)}` +
-      ` · новый матч: ${r.match.map(m => m.name + ' ' + (+m.cos).toFixed(2)).join(' · ')}`;
-    if (label){
-      const rc = await api('/api/enroll/rename_cluster', {method:'POST', body:{
-        recording_id: +rid, from_label: label, to_name: name}});
-      msg = `переименовано сегментов: ${rc.updated}` +
-        (rc.conflicts_closed ? `, закрыто конфликтов: ${rc.conflicts_closed}` : '') + ' · ' + msg;
-    }
-    res.style.color = 'var(--green)';
-    res.textContent = msg;
-    card.querySelectorAll('button.act, select').forEach(el => { if (el.dataset.act !== 'vspan') el.disabled = true; });
-    loadPeople().catch(() => {});
-  } catch (err) {
-    res.style.color = 'var(--red)';
-    res.textContent = 'не вышло: ' + ((err && err.message) || err);
-  }
 }
 
 // ---------- Диск ----------
@@ -1142,7 +1662,17 @@ async function loadSp(){
   SPK = spk; VPEOPLE = spk;
   $('confNote').textContent = '';
   $('spkList').innerHTML = spk.map(spCard).join('') || '<div class="dim">людей в базе нет</div>';
-  $('confList').innerHTML = confs.map(confCard).join('') || '<div class="dim">открытых конфликтов нет</div>';
+  // экран 4: только спорные фразы — действия видны всегда, они требуют внимания
+  $('confList').innerHTML = confs.map(confHtml).join('') || '<div class="dim">открытых конфликтов нет</div>';
+}
+
+function confHtml(c){
+  return renderUtterance(c, {
+    card: true, always: true, cid: c.conflict_id, link: 'conflicts/' + c.conflict_id,
+    context: `конфликт #${c.conflict_id} · ${esc(reasonTxt(c.reason))} · запись #${c.recording_id}` +
+      (c.rec_title ? ` «${esc(c.rec_title)}»` : '') +
+      ` <button class="lnk" data-act="goto" data-h="transcript/${c.recording_id}/seg/${c.id}"
+          title="открыть эту реплику в ленте транскрипта">в транскрипте ↗</button>`});
 }
 
 function spCard(p){
@@ -1158,33 +1688,87 @@ function spCard(p){
   </div>`;
 }
 
-function confCard(c){
-  const d = c.detail || {};
-  const top = Array.isArray(d.top) ? d.top.map(t => `${esc(t.name)} ${(+t.cos).toFixed(2)}`).join(' · ') : '';
-  return `<div class="card" data-cid="${c.id}" style="width:100%">
-    <div class="dim">#${c.id} · ${esc(c.reason)} · запись #${c.recording_id} · ${fmtT(c.start_sec)}–${fmtT(c.end_sec)} ·
-      <span style="color:${spkCol(c.speaker_name)}">${esc(c.speaker_name)}</span>${c.confidence != null ? ' · ' + (+c.confidence).toFixed(2) : ''}
-      ${linkBtn('conflicts/' + c.id)}</div>
-    <div style="margin:6px 0">«${esc(c.text)}»</div>
-    ${top ? `<div class="dim">top: ${top}${d.cluster_default ? ' · cluster: ' + esc(d.cluster_default.name) : ''}</div>` : ''}
-    <div class="rsrow">
-      <button class="act" data-act="vspan" data-rid="${c.recording_id}" data-s="${c.start_sec}" data-e="${c.end_sec}"${
-        c.has_audio === false ? ' disabled title="аудио недоступно"' : ''}>▶ слушать</button>
-      <button class="lnk" data-act="goto" data-h="transcript/${c.recording_id}/seg/${c.segment_id}" title="открыть в транскрипте">↗</button>
-      ${SPK.map((p, n) => `<button class="act" data-act="rs" data-cid="${c.id}" data-n="${n}" style="color:${spkCol(p.name)}">${esc(p.name)}</button>`).join('')}
-      <input placeholder="новое имя"><button class="act" data-act="rsnew" data-cid="${c.id}">OK</button>
-    </div>
-  </div>`;
+// ---------- события ----------
+// действия компонента «Фраза» (по одному имени на действие, разметка не дублируется)
+const STAGE_RU = {download: 'скачивание', detect: 'детектор речи', quality: 'транскрипция',
+                  resolve: 'опознание голосов', store: 'готовый транскрипт'};
+const STAGE_HINT = {
+  download: 'Скачивание записи из облака Plaud на диск.',
+  detect: 'Локально и бесплатно: VAD режет тишину, классификатор отличает речь от шума. Определяет, какие куски вообще отправлять в платную модель.',
+  quality: 'Платный этап: ElevenLabs Scribe расшифровывает речевые куски и размечает, кто когда говорил (анонимно: speaker_0, speaker_1).',
+  resolve: 'Локально: по голосу определяем, КТО именно говорил, сверяясь с базой эталонов. Сюда же попадает разрезание склеенных реплик.',
+  store: 'Финал: реплики со спикерами сохраняются в базу, рядом пишется читаемый transcript.md. После этого запись можно открыть на вкладке Транскрипт.'};
+
+// Сводный прогресс конвейера: видно, сколько часов аудио прошло каждый этап.
+// Часы, а не число файлов: запись на 12 часов и на 5 минут — несопоставимая работа.
+async function loadProgress(){
+  let d;
+  try { d = await api('/api/progress'); } catch (e) { return; }
+  const q = d.queue || {};
+  const busy = ['downloading','detecting','transcribing','resolving'].reduce((a,k) => a + (q[k]||0), 0);
+  const head = `<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:baseline;margin-bottom:8px">
+      <b>${d.recs_total} записей · ${d.hours_total} ч · ${d.gb_total} ГБ</b>
+      <span class="dim">готово полностью: <b style="color:var(--green)">${d.overall_pct}%</b></span>
+      ${busy ? `<span style="color:var(--yellow)">в работе: ${busy}</span>` : ''}
+      ${q.failed ? `<span style="color:var(--red)" title="записи, которые сейчас не удалось обработать; большинство переигрывается автоматически">с ошибкой: ${q.failed}</span>` : ''}
+      ${d.retried ? `<span class="dim" title="падений, которые уже исправлены повторным прогоном — история, а не текущая проблема">исправлено повтором: ${d.retried}</span>` : ''}
+      <span id="balBox" class="dim" style="cursor:pointer" title="остатки на счетах провайдеров — нажмите, чтобы обновить">счета: …</span>
+    </div>`;
+  // У каждого этапа свой пул потоков: этапы упираются в разные ресурсы (чужие
+  // сервисы против локального процессора), поэтому и загрузку показываем отдельно.
+  const rows = d.stages.map(s => `
+    <div class="prow" title="${esc(STAGE_HINT[s.stage] || '')} — пройдено ${s.hours} из ${s.hours_total} ч аудио">
+      <span class="nm">${esc(STAGE_RU[s.stage] || s.stage)}</span>
+      <span class="track"><i class="${s.pct >= 99.5 ? 'done' : ''}" style="width:${Math.min(100, s.pct)}%"></i></span>
+      <span class="num">${s.pct}% · ${s.hours}/${s.hours_total} ч · ${s.recs}/${s.recs_total} зап.${
+        s.workers ? ` · <span style="color:${s.busy ? 'var(--yellow)' : 'var(--dim)'}"
+          title="занято потоков из ${s.workers}: у этого этапа собственный пул">${s.busy}/${s.workers} потоков</span>` : ''}${
+        s.waiting ? ` · <span class="dim" title="записей ждёт своей очереди на этот этап">ждёт ${s.waiting} (${s.waiting_hours} ч)</span>` : ''}${
+        s.failed ? ` · <span style="color:var(--red)" title="записи в этом этапе сейчас со статусом ошибки">${s.failed} ошиб.</span>` : ''}</span>
+    </div>`).join('');
+  $('progBox').innerHTML = head + rows;
+  loadBalances();
 }
 
-// ---------- события ----------
+// Остатки на счетах провайдеров. Запрос отдельный и необязательный: он ходит
+// в чужие API, и его задержка не должна тормозить показ прогресса.
+async function loadBalances(force){
+  const el = $('balBox');
+  if (!el) return;
+  if (BAL_CACHE && !force){ el.innerHTML = BAL_CACHE; return; }
+  try {
+    const d = await api('/api/balances');
+    BAL_CACHE = 'счета: ' + d.balances.map(b => {
+      const color = !b.ok ? 'var(--dim)' : (b.low ? 'var(--red)' : 'var(--green)');
+      return `<b style="color:${color}" title="${esc(b.note || '')}">${esc(b.api)} ${esc(b.text)}</b>`;
+    }).join(' · ');
+    el.innerHTML = BAL_CACHE;
+  } catch (e) { el.textContent = 'счета: не удалось получить'; }
+}
+let BAL_CACHE = '';
+
+const UACTS = new Set(['uplay', 'uok', 'uassign', 'unew', 'unoise', 'usplit', 'uall']);
+
+// Выбор человека в списке меняет смысл кнопки подтверждения: пользователь выбирает
+// имя и жмёт «подтвердить», ожидая назначить именно его — надпись это показывает.
+document.addEventListener('change', e => {
+  const sel = e.target.closest('[data-role="who"]');
+  if (!sel) return;
+  const box = sel.closest('.utt');
+  const ok = box && box.querySelector('[data-act="uok"]');
+  if (!ok) return;
+  ok.innerHTML = sel.value ? '✓ это ' + esc(sel.value) : (ok.dataset.base || '✓ подтвердить');
+});
+
 document.addEventListener('click', async e => {
   if (HL_EL && !e.target.closest('.hl')) clearHl();
+  if (e.target.closest('#balBox')){ $('balBox').textContent = 'счета: обновляю…'; loadBalances(true); return; }
   const nb = e.target.closest('nav button');
   if (nb){ go(TAB_HASH[nb.dataset.tab], false).catch(() => {}); return; }
   const vb = e.target.closest('#vnav button');
   if (vb){
-    const h = {people:'voices', enroll:'voices/enroll', sugg:'voices/suggestions'}[vb.dataset.vsec];
+    const h = {people:'voices', enroll:'voices/enroll', sugg:'voices/suggestions',
+               unknown:'voices/unknown'}[vb.dataset.vsec];
     go(h, false).catch(() => {});
     return;
   }
@@ -1192,65 +1776,43 @@ document.addEventListener('click', async e => {
   if (b){
     try {
       const a = b.dataset.act, card = b.closest('.card');
+      // все действия компонента «Фраза» — через один обработчик, без дублей по экранам
+      if (UACTS.has(a)){ await uttAct(b, a); return; }
+      if (a === 'usel'){
+        const el = b.closest('.utt'), id = +el.dataset.uid;
+        if (b.checked) SEL.add(id); else SEL.delete(id);
+        el.classList.toggle('sel', b.checked);
+        bulkSync();
+        return;
+      }
       if (a === 'link') await copyLink(b.dataset.h, b);
       else if (a === 'goto') await go(b.dataset.h, true, true);
+      else if (a === 'unkplay') play({src: recSrc(b.dataset.rid), btn: b,
+        start: +b.dataset.start, end: +b.dataset.end, title: 'неопознанный голос'});
+      else if (a === 'unknew'){
+        const g = UNK[+b.dataset.i];
+        const name = prompt('Имя человека (как будет в транскриптах):', '');
+        if (!name) return;
+        await api('/api/speakers', {method:'POST', body:{name: name.trim()}});
+        VPEOPLE = [];
+        // эталон не берём автоматически: человек заведён, но голос ему нужно
+        // подтвердить руками — на разметке записи, где видно контекст реплики
+        await go(`voices/enroll/${g.sample.recording_id}`, true, true);
+      }
       else if (a === 'row') toggleRec(+b.dataset.rid);
       else if (a === 'trgo') await go('transcript/' + b.dataset.rid, true);
-      else if (a === 'tog'){ const p = $('pan' + b.dataset.i); if (p) p.style.display = p.style.display === 'none' ? '' : 'none'; }
-      else if (a === 'rs') await resolveConflict(+b.dataset.cid, SPK[+b.dataset.n].name);
-      else if (a === 'rsnew'){
-        const inp = b.parentElement.querySelector('input');
-        const v = (inp && inp.value || '').trim();
-        if (v) await resolveConflict(+b.dataset.cid, v);
+      else if (a === 'bassign'){
+        const who = $('bulkWho').value;
+        if (!who){ bulkWhat(); showErr('выберите человека в панели снизу'); return; }
+        await bulkApply(who);
       }
+      else if (a === 'bnoise') await bulkApply('[noise]');
+      else if (a === 'bclear') clearSel();
       else if (a === 'pstop') stopAll();
       else if (a === 'playat'){ if (PEND_T != null) seekPlay(PEND_T); }
       else if (a === 'person') await openPerson(+b.dataset.id, true);
       else if (a === 'vplay') playSample(b.dataset.sid, b, b.dataset.who);
       else if (a === 'vspan') playSpan(b.dataset.rid, b.dataset.s, b.dataset.e, b);
-      else if (a === 'econf' || a === 'eother' || a === 'enoise'){
-        // решение по одной спорной реплике: подтвердить / отдать другому / в шум
-        const row = b.closest('.frag');
-        let name;
-        if (a === 'econf') name = ECAND.groups[+b.dataset.i].label;
-        else if (a === 'enoise') name = '[noise]';
-        else {
-          const sel = row && row.querySelector('[data-role="other"]');
-          name = sel && sel.value;
-          if (!name){ alert('выберите человека в списке рядом'); return; }
-        }
-        const old = b.innerHTML;
-        b.disabled = true; b.innerHTML = '…';
-        try {
-          const r = await api('/api/enroll/confirm_segment', {method:'POST',
-            body:{segment_id: +b.dataset.seg, name}});
-          if (row){
-            row.classList.remove('amb');
-            const bad = row.querySelector('.badge.bad'); if (bad) bad.remove();
-            row.querySelectorAll('[data-act="econf"],[data-act="eother"],[data-act="enoise"],[data-role="other"]')
-               .forEach(el => el.remove());
-            const mark = document.createElement('span');
-            mark.className = 'badge';
-            mark.style.color = a === 'enoise' ? 'var(--dim)' : 'var(--green)';
-            mark.textContent = a === 'enoise' ? '🗑 шум' : '✓ ' + name;
-            row.insertBefore(mark, row.querySelector('.txt'));
-          }
-          const res = card ? card.querySelector('.eres') : null;
-          if (res && !r.noise){
-            res.style.color = 'var(--green)';
-            res.textContent = `эталонов у ${name}: ${r.samples_total}` +
-              (r.coherence != null ? ` · когерентность нового ${(+r.coherence).toFixed(2)}` : '') +
-              ` · матч: ${(r.match || []).map(m => m.name + ' ' + (+m.cos).toFixed(2)).join(' · ')}`;
-          } else if (res){
-            res.style.color = 'var(--dim)';
-            res.textContent = 'реплика помечена как шум/фон, эталон не создан';
-          }
-          loadPeople().catch(() => {});
-        } catch (e){
-          b.disabled = false; b.innerHTML = old;
-          alert('не получилось: ' + ((e && e.message) || e));
-        }
-      }
       else if (a === 'vmore'){
         b.closest('.ecard').querySelectorAll('[data-extra]').forEach(el => el.style.display = '');
         b.remove();
@@ -1291,12 +1853,6 @@ document.addEventListener('click', async e => {
         if (confirm('Пометить весь кластер как мусор/фон? Эталон добавлен не будет.'))
           await enrollAct(card, 'trash');
       }
-      else if (a === 'sname'){
-        const who = card.querySelector('[data-role="who"]').value;
-        if (!who){ card.querySelector('.eres').textContent = 'выберите человека в списке'; return; }
-        await suggEnroll(card, b.dataset.rid, who, b.dataset.s, b.dataset.e, b.dataset.label);
-      }
-      else if (a === 'sadd') await suggEnroll(card, b.dataset.rid, b.dataset.name, b.dataset.s, b.dataset.e, null);
       else if (a === 'rep'){
         if (confirm('Переиграть запись #' + b.dataset.rid + ' с этапа ' + b.dataset.stage + '?')){
           await api('/api/recordings/' + b.dataset.rid + '/reprocess', {method: 'POST', body: {from_stage: b.dataset.stage}});
@@ -1306,10 +1862,12 @@ document.addEventListener('click', async e => {
     } catch (err) {}
     return;
   }
-  const sg = e.target.closest('.seg');
-  if (sg && sg.dataset.t !== undefined){
+  // клик мимо кнопок по фразе в ленте транскрипта — перемотка на её начало
+  const sg = e.target.closest('.utt');
+  if (sg && TAB === 'tr' && CUR_RID != null && !e.target.closest('.uacts') &&
+      !e.target.closest('input,select,label,button')){
     seekPlay(+sg.dataset.t);
-    setHash('transcript/' + CUR_RID + '/seg/' + sg.dataset.id, false);
+    setHash('transcript/' + CUR_RID + '/seg/' + sg.dataset.uid, false);
   }
 });
 
@@ -1317,6 +1875,9 @@ $('enrollSel').addEventListener('change', async () => {
   const v = +$('enrollSel').value;
   if (v){ setHash('voices/enroll/' + v, false); await loadCandidates(v); }
 });
+
+$('bulkWho').addEventListener('change', bulkWhat);
+$('bulkEnroll').addEventListener('change', bulkWhat);
 
 setInterval(() => { if (TAB === 'jobs' && !ROUTING) loadJobs().catch(() => {}); }, 5000);
 
