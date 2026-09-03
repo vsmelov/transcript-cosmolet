@@ -131,7 +131,7 @@ def _merge_closest(cents: list[np.ndarray], groups: list[list[int]], join: float
         cents.pop(j)
 
 
-def _cluster_utterances(utts: list[Utterance]) -> list[dict]:
+def _cluster_utterances(utts: list[Utterance], join: float | None = None) -> list[dict]:
     """Кто есть кто — решаем по голосу самих реплик, а не по меткам провайдера.
 
     Метка Scribe (speaker_0/1) — его гипотеза, и она бывает смешанной: на записи #19
@@ -149,7 +149,7 @@ def _cluster_utterances(utts: list[Utterance]) -> list[dict]:
         return []
     groups = [[i] for i in anchors]
     cents = [utts[i].vec.copy() for i in anchors]
-    _merge_closest(cents, groups, config.UTTER_JOIN)
+    _merge_closest(cents, groups, config.UTTER_JOIN if join is None else join)
 
     sec = lambda g: sum(utts[i].end - utts[i].start for i in g)
     # Кластер из пары случайных реплик — чаще шум, чем человек. Такие распускаем:
@@ -189,7 +189,46 @@ def _cluster_utterances(utts: list[Utterance]) -> list[dict]:
     return out
 
 
-def assign_speakers(utts: list[Utterance], src: Path, base: dict[str, np.ndarray]) -> dict:
+def _pick_join(utts: list[Utterance], base: dict[str, np.ndarray]) -> tuple[float, dict]:
+    """Порог склейки подбираем под запись, а не берём константой.
+
+    Единого правильного порога не существует: он зависит от акустики, числа людей
+    и того, насколько похожи их голоса. На трёх реальных записях оптимум оказался
+    разным — 0.60, 0.625 и 0.675, и разница в опознанной речи была кратной.
+
+    Критерий — сколько МИНУТ РЕЧИ удалось уверенно назвать по базе эталонов. Чистая
+    геометрия (силуэт) для этого не годится: она всегда предпочитает меньше
+    кластеров и на записи #19 выбирала порог, где два человека слиты в одного.
+    Дробление же одного человека на два кластера безвредно — оба получат его имя.
+    """
+    if not base:
+        return config.UTTER_JOIN, {"reason": "база голосов пуста"}
+    names = sorted(base)
+    B = np.array([base[n] for n in names])
+    best = (config.UTTER_JOIN, -1.0, 0)
+    tried = []
+    for k in range(int((config.JOIN_MAX - config.JOIN_MIN) / config.JOIN_STEP) + 1):
+        th = round(config.JOIN_MIN + k * config.JOIN_STEP, 3)
+        clusters = _cluster_utterances(list(utts), th)
+        named = 0.0
+        for c in clusters:
+            sim = B @ c["cent"]
+            order = np.argsort(-sim)
+            gap = sim[order[0]] - (sim[order[1]] if len(order) > 1 else 0.0)
+            if sim[order[0]] >= config.CONF_OK and gap >= config.TOP2_MARGIN:
+                named += c["spoke"]
+        tried.append({"join": th, "clusters": len(clusters), "named_sec": round(named)})
+        # При равном результате выигрывает БОЛЬШИЙ порог. Ошибки диаризации не
+        # равноценны: слипшихся людей приходится расклеивать руками по репликам, а
+        # лишнее дробление закрывается парой подтверждений — оба куска получают
+        # одно имя. Поэтому при сомнении дробим.
+        if named > best[1] + 1e-9 or (abs(named - best[1]) <= 1e-9 and th > best[0]):
+            best = (th, named, len(clusters))
+    return best[0], {"picked": best[0], "named_sec": round(best[1]), "tried": tried}
+
+
+def assign_speakers(utts: list[Utterance], src: Path, base: dict[str, np.ndarray],
+                    forced_join: float | None = None) -> dict:
     """Эмбеддинги -> кластеры -> имена. Возвращает сводку кластеров для артефакта."""
     # 0) чиним склейки провайдера: длинные реплики, внутри которых сменился голос
     cache = embed_mod.AudioCache(src)
@@ -211,8 +250,13 @@ def assign_speakers(utts: list[Utterance], src: Path, base: dict[str, np.ndarray
         except Exception:
             u.vec = None
 
-    # 2) кластеризация РЕПЛИК по голосу (метки провайдера — только подсказка)
-    clusters = _cluster_utterances(utts)
+    # 2) кластеризация РЕПЛИК по голосу (метки провайдера — только подсказка).
+    # Порог подбираем под запись: единого правильного не существует.
+    if forced_join:
+        join, join_info = forced_join, {"picked": forced_join, "source": "выбран вручную"}
+    else:
+        join, join_info = _pick_join(utts, base)
+    clusters = _cluster_utterances(utts, join)
 
     # 3) имя кластеру: матч центроида против базы голосов
     names: list[str] = []
@@ -270,7 +314,7 @@ def assign_speakers(utts: list[Utterance], src: Path, base: dict[str, np.ndarray
                                    "top2_close" if margin < config.TOP2_MARGIN else "low_confidence")}
         if reassigned:
             u.detail = dict(u.detail or {}, reassigned=reassigned, top=top)
-    return {"clusters": summary, "splits": split_count}
+    return {"clusters": summary, "splits": split_count, "join": join_info}
 
 
 JUDGE_PROMPT = """Диалог, транскрипт с автоматически определёнными спикерами. У одной реплики

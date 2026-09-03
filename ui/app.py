@@ -425,7 +425,7 @@ def rec_audio(rec_id: int):
 
 @app.get("/api/speakers")
 def speakers():
-    people = q("SELECT id, name, aliases, created_at FROM speakers ORDER BY name")
+    people = q("SELECT id, name, aliases, about, created_at FROM speakers ORDER BY name")
     samples = decorate(load_samples())
     by_sp = {}
     for s in samples:
@@ -453,9 +453,108 @@ def speaker_create(body: dict):
     return row
 
 
+@app.get("/api/recordings/{rec_id}/join_scan")
+def join_scan(rec_id: int):
+    """Что получится при разных порогах склейки голосов — таблица для выбора глазами.
+
+    Считается по сохранённым векторам сегментов: ни аудио, ни платных вызовов, поэтому
+    можно прогнать весь диапазон разом. Единого правильного порога не существует —
+    он зависит от акустики и от того, насколько похожи голоса в этой записи.
+    """
+    rows = q("""SELECT start_sec, end_sec, embedding FROM segments
+                 WHERE recording_id = %s AND embedding IS NOT NULL
+                 ORDER BY start_sec""", (rec_id,))
+    if not rows:
+        return {"scan": [], "note": "у записи нет векторов — этап опознания ещё не проходил"}
+    V = np.array([json.loads(r["embedding"]) if isinstance(r["embedding"], str) else r["embedding"]
+                  for r in rows], dtype=np.float64)
+    V /= np.linalg.norm(V, axis=1, keepdims=True)
+    dur = np.array([float(r["end_sec"]) - float(r["start_sec"]) for r in rows])
+    anchors = np.where(dur >= 3.0)[0]
+
+    base = {}
+    for r in q("""SELECT sp.name, ss.embedding FROM speakers sp
+                    JOIN speaker_samples ss ON ss.speaker_id = sp.id
+                   WHERE ss.embedding IS NOT NULL AND ss.is_active"""):
+        v = np.array(json.loads(r["embedding"]) if isinstance(r["embedding"], str) else r["embedding"])
+        base.setdefault(r["name"], []).append(v / (np.linalg.norm(v) or 1))
+    names = sorted(base)
+    B = np.array([np.mean(base[n], axis=0) / (np.linalg.norm(np.mean(base[n], axis=0)) or 1)
+                  for n in names]) if names else np.zeros((0, V.shape[1]))
+
+    out = []
+    for k in range(9):
+        th = round(0.50 + k * 0.025, 3)
+        groups = [[int(i)] for i in anchors]
+        cents = [V[i].copy() for i in anchors]
+        while len(groups) > 1:
+            C = np.array(cents)
+            M = C @ C.T
+            np.fill_diagonal(M, -1.0)
+            i, j = np.unravel_index(int(M.argmax()), M.shape)
+            if M[i, j] < th:
+                break
+            groups[i] += groups[j]
+            m = np.mean([cents[i], cents[j]], axis=0)
+            cents[i] = m / (np.linalg.norm(m) or 1)
+            groups.pop(j); cents.pop(j)
+        people, named = [], 0.0
+        for g, c in sorted(zip(groups, cents), key=lambda gc: -dur[gc[0]].sum()):
+            sec = float(dur[g].sum())
+            if sec < 30:
+                continue
+            if len(B):
+                sim = B @ c
+                o = np.argsort(-sim)
+                gap = float(sim[o[0]] - (sim[o[1]] if len(o) > 1 else 0))
+                sure = sim[o[0]] >= 0.70 and gap >= 0.15
+                if sure:
+                    named += sec
+                people.append({"minutes": round(sec / 60, 1), "sure": bool(sure),
+                               "name": names[o[0]], "cos": round(float(sim[o[0]]), 2)})
+            else:
+                people.append({"minutes": round(sec / 60, 1), "sure": False,
+                               "name": "?", "cos": 0.0})
+        out.append({"join": th, "clusters": len(people),
+                    "named_min": round(named / 60, 1), "people": people[:10]})
+    return {"scan": out, "utterances": len(rows), "anchors": int(len(anchors))}
+
+
+@app.post("/api/recordings/{rec_id}/join")
+def set_join(rec_id: int, body: dict):
+    """Зафиксировать порог склейки и переиграть опознание с ним (бесплатно, локально)."""
+    join = (body or {}).get("join")
+    def run(c):
+        if join is None:
+            c.execute("UPDATE recordings SET meta = meta - 'join' WHERE id=%s", (rec_id,))
+        else:
+            c.execute("""UPDATE recordings
+                         SET meta = meta || jsonb_build_object('join', %s::float)
+                         WHERE id=%s""", (float(join), rec_id))
+        return c.execute("UPDATE recordings SET status='transcribed' WHERE id=%s RETURNING id",
+                         (rec_id,)).fetchone()
+    if _run(run) is None:
+        raise HTTPException(404, "recording not found")
+    return {"ok": True, "id": rec_id, "join": join}
+
+
+@app.post("/api/speakers/{sp_id}/about")
+def speaker_about(sp_id: int, body: dict):
+    """Свободная заметка о человеке: контакты в мессенджерах, почты, контекст.
+
+    Держим одним текстовым полем без схемы намеренно: это опора для связывания
+    спикера с ним же в других источниках, а формат таких пометок заранее не угадать.
+    """
+    row = q1("UPDATE speakers SET about = %s WHERE id = %s RETURNING id, about",
+             (str((body or {}).get("about", ""))[:4000], sp_id))
+    if row is None:
+        raise HTTPException(404, "speaker not found")
+    return row
+
+
 @app.get("/api/speakers/{sp_id}/detail")
 def speaker_detail(sp_id: int):
-    sp = q1("SELECT id, name, aliases, created_at FROM speakers WHERE id = %s", (sp_id,))
+    sp = q1("SELECT id, name, aliases, about, created_at FROM speakers WHERE id = %s", (sp_id,))
     if sp is None:
         raise HTTPException(404, "speaker not found")
     sp["samples"] = decorate(load_samples("WHERE speaker_id = %s", (sp_id,)))

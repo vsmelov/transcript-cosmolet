@@ -163,7 +163,12 @@ def stage_resolve(rec_id: int, src: Path, utts: list) -> dict:
     job = db.job_start(rec_id, "resolve")
     try:
         base = embed_mod.known_speakers()
-        info = diarize.assign_speakers(utts, src, base)
+        # порог склейки, выбранный руками в UI, перекрывает автоподбор
+        meta = db.q1("SELECT meta FROM recordings WHERE id=%s", rec_id)[0] or {}
+        if isinstance(meta, str):
+            meta = json.loads(meta)
+        forced = meta.get("join")
+        info = diarize.assign_speakers(utts, src, base, float(forced) if forced else None)
         amb_before = sum(1 for u in utts if u.ambiguous)
         closed, cost = (0, 0.0)
         if amb_before:

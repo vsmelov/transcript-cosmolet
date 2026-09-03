@@ -204,6 +204,7 @@ svg text{font-family:inherit}
         <button class="act" data-act="ereload">пересчитать</button>
         <span id="enrollHint" class="dim" style="font-size:12px"></span>
       </div>
+      <div id="joinBox" class="card" style="margin:8px 0"></div>
       <div id="enrollFilter"></div>
       <div id="enrollBody"><div class="dim">выберите запись</div></div>
     </div>
@@ -1410,6 +1411,16 @@ function renderPerson(){
       ${linkBtn('voices/' + p.id)}
     </div>
     ${p.aliases && p.aliases.length ? `<div class="sub">алиасы: ${esc(p.aliases.join(', '))}</div>` : ''}
+    <div style="margin-top:8px">
+      <div class="sub">заметка: контакты в мессенджерах, почты, контекст — по ним потом
+        сводить этого человека с другими источниками</div>
+      <textarea id="aboutBox" rows="3" style="width:100%;box-sizing:border-box;margin-top:4px"
+        placeholder="@telegram · +7... whatsapp · mail@... · кто это и откуда">${esc(p.about || '')}</textarea>
+      <div class="rsrow" style="margin-top:4px">
+        <button class="act" data-act="vabout" data-id="${p.id}">сохранить заметку</button>
+        <span id="aboutHint" class="dim" style="font-size:12px"></span>
+      </div>
+    </div>
     <table style="margin-top:8px"><thead><tr><th></th><th>длит.</th><th>вид</th><th>источник</th><th>coh</th><th>статус</th><th></th></tr></thead>
       <tbody>${rows || '<tr><td colspan="7" class="dim">сэмплов нет</td></tr>'}</tbody></table>
     <div class="rsrow"><button class="act" data-act="goto" data-h="voices/enroll">+ добавить эталон из записи</button></div>`;
@@ -1424,6 +1435,37 @@ async function initEnroll(rid){
   if (id == null){ $('enrollBody').innerHTML = '<div class="dim">записей нет</div>'; return; }
   sel.value = String(id);
   await loadCandidates(id);
+  loadJoinScan(id);
+}
+
+// Порог склейки голосов: единого правильного не существует, поэтому показываем,
+// что выйдет при разных, и даём выбрать глазами. Слипшихся людей расклеивать
+// руками дорого, лишнее дробление закрывается парой подтверждений — при сомнении
+// берите порог повыше.
+async function loadJoinScan(rid){
+  const box = $('joinBox');
+  box.innerHTML = '<div class="dim">считаю варианты разделения голосов…</div>';
+  let d;
+  try { d = await api(`/api/recordings/${rid}/join_scan`); } catch (e) { fail(box, e); return; }
+  if (!d.scan.length){ box.innerHTML = `<div class="dim">${esc(d.note || 'нет данных')}</div>`; return; }
+  const best = d.scan.reduce((a, b) => (b.named_min > a.named_min ||
+    (b.named_min === a.named_min && b.join > a.join)) ? b : a);
+  box.innerHTML = `<div class="dim" style="margin-bottom:6px">Разделение голосов: ${d.utterances} реплик,
+      ${d.anchors} опорных. Чем выше порог, тем строже разделение.</div>` +
+    d.scan.map(r => {
+      const who = r.people.map(p => `<span style="color:${p.sure ? 'var(--green)' : 'var(--dim)'}"
+        title="${p.sure ? 'опознан уверенно' : 'похож, но недостаточно уверенно'}">${esc(p.name)} ${p.cos}
+        <span class="dim">(${p.minutes}м)</span></span>`).join(' · ') || '<span class="dim">никого не узнали</span>';
+      return `<div class="prow" style="align-items:baseline">
+        <span class="nm">${r.join}${r.join === best.join ? ' ★' : ''}</span>
+        <span style="flex:1">${who}</span>
+        <span class="num">${r.clusters} голосов · опознано ${r.named_min} мин</span>
+        <button class="act" data-act="setjoin" data-rid="${rid}" data-join="${r.join}">применить</button>
+      </div>`;
+    }).join('') +
+    `<div class="rsrow"><button class="act" data-act="setjoin" data-rid="${rid}" data-join="">
+      вернуть автоподбор</button>
+      <span class="dim" style="font-size:12px">★ — выбор автоподбора: больше всего уверенно опознанной речи</span></div>`;
 }
 
 async function loadCandidates(rid){
@@ -1787,6 +1829,17 @@ document.addEventListener('click', async e => {
       }
       if (a === 'link') await copyLink(b.dataset.h, b);
       else if (a === 'goto') await go(b.dataset.h, true, true);
+      else if (a === 'setjoin'){
+        const j = b.dataset.join === '' ? null : +b.dataset.join;
+        await api(`/api/recordings/${b.dataset.rid}/join`, {method:'POST', body:{join: j}});
+        showHint(j == null ? 'вернул автоподбор, пересчитываю…' : `порог ${j}, пересчитываю…`);
+      }
+      else if (a === 'vabout'){
+        const t = $('aboutBox').value;
+        await api(`/api/speakers/${b.dataset.id}/about`, {method:'POST', body:{about: t}});
+        VPERSON.about = t;
+        $('aboutHint').textContent = 'сохранено';
+      }
       else if (a === 'unkplay') play({src: recSrc(b.dataset.rid), btn: b,
         start: +b.dataset.start, end: +b.dataset.end, title: 'неопознанный голос'});
       else if (a === 'unknew'){

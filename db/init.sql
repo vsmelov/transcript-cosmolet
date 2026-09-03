@@ -34,6 +34,9 @@ CREATE TABLE speakers (
     id         serial PRIMARY KEY,
     name       text NOT NULL UNIQUE,
     aliases    text[] NOT NULL DEFAULT '{}',
+    -- свободная заметка о человеке: контакты в разных мессенджерах, почты, контекст.
+    -- Нужна, чтобы связывать спикера с ним же в других источниках (Telegram, WhatsApp)
+    about      text NOT NULL DEFAULT '',
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
