@@ -53,7 +53,7 @@ def _tag_engine():
         import sherpa_onnx
         _local.tagger = sherpa_onnx.AudioTagging(sherpa_onnx.AudioTaggingConfig(
             model=sherpa_onnx.AudioTaggingModelConfig(
-                ced=f"{config.TAG_MODEL}/model.int8.onnx", num_threads=2),
+                ced=f"{config.TAG_MODEL}/model.int8.onnx", num_threads=config.ONNX_THREADS),
             labels=f"{config.TAG_MODEL}/class_labels_indices.csv", top_k=5))
     return _local.tagger
 

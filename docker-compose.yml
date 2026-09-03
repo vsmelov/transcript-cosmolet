@@ -24,6 +24,12 @@ services:
       DATA_DIR: /data
       EMBED_MODEL: /models/campplus_zh_en_advanced.onnx
       PLAUD_TOKENS: /plaud/tokens.json
+      # Размеры пулов — в одном месте: воркер по ним запускает потоки, UI по ним
+      # показывает загрузку. Разъедутся — интерфейс будет врать про «6 из 4».
+      DOWNLOAD_WORKERS: ${DOWNLOAD_WORKERS:-6}
+      DETECT_WORKERS: ${DETECT_WORKERS:-5}
+      QUALITY_WORKERS: ${QUALITY_WORKERS:-6}
+      RESOLVE_WORKERS: ${RESOLVE_WORKERS:-5}
     volumes:
       - ./data:/data
       - ./models:/models:ro
@@ -42,6 +48,12 @@ services:
       DATA_DIR: /data
       EMBED_MODEL: /models/campplus_zh_en_advanced.onnx
       DAILY_BUDGET_USD: ${DAILY_BUDGET_USD}   # тот же предохранитель, что у воркера
+      # Размеры пулов — в одном месте: воркер по ним запускает потоки, UI по ним
+      # показывает загрузку. Разъедутся — интерфейс будет врать про «6 из 4».
+      DOWNLOAD_WORKERS: ${DOWNLOAD_WORKERS:-6}
+      DETECT_WORKERS: ${DETECT_WORKERS:-5}
+      QUALITY_WORKERS: ${QUALITY_WORKERS:-6}
+      RESOLVE_WORKERS: ${RESOLVE_WORKERS:-5}
     volumes:
       - ./data:/data
       - ./models:/models:ro

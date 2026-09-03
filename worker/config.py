@@ -38,12 +38,21 @@ PLAUD_SYNC_EVERY_SEC = int(os.environ.get("PLAUD_SYNC_EVERY_SEC", "900"))   # р
 # детектор и опознание жгут локальный процессор. Общий пул означал, что три
 # тяжёлых детектора занимают все слоты, пока сеть простаивает.
 # Этапы связаны только артефактами на диске, поэтому пулы работают независимо.
-DOWNLOAD_WORKERS = int(os.environ.get("DOWNLOAD_WORKERS", "4"))
-DETECT_WORKERS = int(os.environ.get("DETECT_WORKERS", "3"))    # CPU: VAD + классификатор
+DOWNLOAD_WORKERS = int(os.environ.get("DOWNLOAD_WORKERS", "6"))
+DETECT_WORKERS = int(os.environ.get("DETECT_WORKERS", "5"))    # CPU: VAD + классификатор
 # Одновременные запросы к Scribe ограничены тарифом ElevenLabs (на Starter немного).
 # Упёршийся в лимит запрос не теряется: клиент ретраит его с бэкоффом.
-QUALITY_WORKERS = int(os.environ.get("QUALITY_WORKERS", "4"))
-RESOLVE_WORKERS = int(os.environ.get("RESOLVE_WORKERS", "3"))  # CPU: эмбеддинги голоса
+QUALITY_WORKERS = int(os.environ.get("QUALITY_WORKERS", "6"))
+RESOLVE_WORKERS = int(os.environ.get("RESOLVE_WORKERS", "5"))  # CPU: эмбеддинги голоса
+
+# Локальные этапы работают с пониженным приоритетом: машина у пользователя рабочая,
+# и конвейер не должен драться с ней за процессор. Уступчивый поток забирает только
+# то, что никому не нужно, поэтому их можно держать больше, чем ядер.
+WORKER_NICE = int(os.environ.get("WORKER_NICE", "15"))
+# По потоку на модель: при десятке параллельных обработчиков многопоточный ONNX
+# отнимает больше на переключениях, чем выигрывает. Нам важна пропускная
+# способность конвейера, а не скорость одной записи.
+ONNX_THREADS = int(os.environ.get("ONNX_THREADS", "1"))
 
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "/models/campplus_zh_en_advanced.onnx")
 

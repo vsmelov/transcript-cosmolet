@@ -1287,10 +1287,10 @@ PIPELINE = ["download", "detect", "quality", "resolve", "store"]
 # против локального процессора), поэтому и очереди у них раздельные.
 # stage -> (env лимита, дефолт, статус «ждёт», статус «в работе»)
 POOLS = {
-    "download": ("DOWNLOAD_WORKERS", 4, "pending_download", "downloading"),
-    "detect":   ("DETECT_WORKERS",   3, "new",              "detecting"),
-    "quality":  ("QUALITY_WORKERS",  4, "detected",         "transcribing"),
-    "resolve":  ("RESOLVE_WORKERS",  3, "transcribed",      "resolving"),
+    "download": ("DOWNLOAD_WORKERS", 6, "pending_download", "downloading"),
+    "detect":   ("DETECT_WORKERS",   5, "new",              "detecting"),
+    "quality":  ("QUALITY_WORKERS",  6, "detected",         "transcribing"),
+    "resolve":  ("RESOLVE_WORKERS",  5, "transcribed",      "resolving"),
 }
 
 

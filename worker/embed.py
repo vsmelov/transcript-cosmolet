@@ -22,7 +22,7 @@ def extractor():
     if getattr(_local, "ext", None) is None:
         import sherpa_onnx
         _local.ext = sherpa_onnx.SpeakerEmbeddingExtractor(
-            sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=config.EMBED_MODEL, num_threads=2))
+            sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=config.EMBED_MODEL, num_threads=config.ONNX_THREADS))
     return _local.ext
 
 

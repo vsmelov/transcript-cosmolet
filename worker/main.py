@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import tempfile
 import threading
@@ -259,6 +260,14 @@ def run_stage(stage: str, rec) -> None:
 def stage_loop(stage: str, num: int) -> None:
     """Обработчик одного этапа: тянет свою очередь, пока она не опустеет."""
     paid = stage in ("quality", "resolve")
+    # Этапы, которые считают локально, уступают процессор всему остальному:
+    # в Linux nice действует на конкретный поток, а запущенный отсюда ffmpeg
+    # наследует приоритет. Ждущим сеть этапам это не нужно — они и так простаивают.
+    if stage in ("detect", "resolve") and config.WORKER_NICE:
+        try:
+            os.nice(config.WORKER_NICE)
+        except OSError:
+            pass
     while True:
         try:
             # бюджет стережём только на платных этапах: детектор бесплатный и
