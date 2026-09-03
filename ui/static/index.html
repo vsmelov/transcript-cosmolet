@@ -208,6 +208,7 @@ svg text{font-family:inherit}
       <button data-vsec="enroll">Разметка записи</button>
       <button data-vsec="sugg">Предложения</button>
       <button data-vsec="unknown">Кого не хватает</button>
+      <button data-vsec="fast">⚡ Быстрая разметка</button>
     </div>
     <div id="vsec-people" class="vsec" style="display:flex;gap:16px;align-items:flex-start">
       <div style="flex:0 0 250px">
@@ -229,6 +230,9 @@ svg text{font-family:inherit}
     <div id="vsec-sugg" class="vsec" style="display:none">
       <div id="suggFilter"></div>
       <div id="suggBody"><div class="dim">загрузка…</div></div>
+    </div>
+    <div id="vsec-fast" class="vsec" style="display:none">
+      <div id="fastBody"><div class="dim">загрузка…</div></div>
     </div>
     <div id="vsec-unknown" class="vsec" style="display:none">
       <div class="dim" style="margin-bottom:8px">Голоса, которые много говорят, но не опознаны.
@@ -1058,6 +1062,8 @@ function parsePath(h){
       return {tab:'voices', vsec:'enroll', rid: /^\d+$/.test(p[2] || '') ? +p[2] : null};
     if (p[1] === 'suggestions') return {tab:'voices', vsec:'sugg'};
     if (p[1] === 'unknown') return {tab:'voices', vsec:'unknown'};
+    if (p[1] === 'fast') return {tab:'voices', vsec:'fast',
+      rid: /^\d+$/.test(p[2] || '') ? +p[2] : null};
     return {tab:'voices', vsec:'people', spId: /^\d+$/.test(p[1] || '') ? +p[1] : null};
   }
   if (p[0] === 'conflicts')
@@ -1399,6 +1405,9 @@ async function showVoices(r){
   } else if (VSEC === 'unknown'){
     if (!VPEOPLE.length) await loadPeople();
     await loadUnknown();
+  } else if (VSEC === 'fast'){
+    if (!VPEOPLE.length) await loadPeople();
+    await loadFast(r.rid);
   } else {
     if (!VPEOPLE.length) await loadPeople();
     await loadSugg();
@@ -1459,6 +1468,106 @@ async function loadUnknownCount(){
            ещё ${d.groups.length} голосов без имени (${mins} мин) →</button>`
       : '';
   } catch (e) {}
+}
+
+// ---------- Быстрая разметка ----------
+// Смысл экрана: не листать сотни реплик, а принимать решения по кластерам целиком.
+// По каждому голосу показываем ядро (типичные реплики — их достаточно послушать,
+// чтобы понять, один ли это человек) и пограничные случаи, где система сомневалась.
+async function loadFast(rid){
+  const box = $('fastBody');
+  if (rid == null){
+    box.innerHTML = '<div class="dim">смотрю, что осталось разобрать…</div>';
+    let d;
+    try { d = await api('/api/review/queue'); } catch (e) { fail(box, e); return; }
+    if (!d.queue.length){
+      box.innerHTML = '<div class="card">Всё разобрано: безымянных голосов и спорных реплик нет.</div>';
+      return;
+    }
+    box.innerHTML = `<div class="dim" style="margin-bottom:8px">Сверху записи, где разбор даёт
+        больше всего: много речи без имени. Заходите и подтверждайте кластеры целиком.</div>` +
+      d.queue.map(r => `<div class="prow">
+        <span class="nm" style="flex:1">#${r.id} · ${esc(r.title || r.filename)}</span>
+        <span class="num">без имени <b style="color:var(--yellow)">${r.unnamed_min} мин</b>
+          · спорных ${r.ambiguous} · реплик ${r.segments}</span>
+        <button class="act" data-act="goto" data-h="voices/fast/${r.id}">разобрать →</button>
+      </div>`).join('');
+    return;
+  }
+
+  box.innerHTML = '<div class="dim">готовлю кластеры…</div>';
+  let d;
+  try { d = await api('/api/enroll/candidates?recording_id=' + rid); } catch (e) { fail(box, e); return; }
+  FAST = d; ERID = rid;
+  const groups = d.groups.filter(g => g.total_sec >= 20);
+  box.innerHTML = `<div class="rsrow" style="margin-top:0">
+      <button class="act" data-act="goto" data-h="voices/fast">← к списку записей</button>
+      <b style="flex:1">#${rid} · ${esc(d.title)}</b>
+      <button class="act" data-act="goto" data-h="voices/enroll/${rid}">подробный разбор →</button>
+    </div>` + groups.map((g, i) => {
+    const named = !/^S[0-9?]/.test(g.label);
+    const m = g.match || [];
+    const picks = m.map(x => `<button class="act" data-act="fpick" data-i="${i}" data-name="${esc(x.name)}"
+        style="border-color:${cohCol(x.cos)}"
+        title="Отдать все ${g.count} реплик человеку «${esc(x.name)}» и добавить ядро в его эталоны">
+        ${esc(x.name)} <b style="color:${cohCol(x.cos)}">${(+x.cos).toFixed(2)}</b></button>`).join(' ');
+    const core = (g.core || []).map(c => `<button class="act" data-act="cplay" data-rid="${rid}"
+        data-start="${c.start_sec}" data-end="${c.end_sec}" style="font-weight:600"
+        title="${esc(c.text)}">▶ ${(c.end_sec - c.start_sec).toFixed(1)}с · типичность ${c.typicality}</button>`).join(' ');
+    // пограничные — те, где система сомневалась: их стоит глянуть перед приёмкой
+    const edge = (g.top || []).filter(t => t.ambiguous).slice(0, 4).map(t => `
+      <div class="prow" style="align-items:baseline">
+        <button class="act" data-act="cplay" data-rid="${rid}" data-start="${t.start_sec}"
+          data-end="${t.end_sec}">▶</button>
+        <span class="num">${(+t.confidence || 0).toFixed(2)}</span>
+        <span style="flex:1">${esc((t.text || '').slice(0, 130))}</span>
+      </div>`).join('');
+    return `<div class="card" data-i="${i}" style="margin-bottom:10px">
+      <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+        <b style="color:${spkCol(g.label)};font-size:15px">${esc(speakerLabel(g.label))}</b>
+        <span class="dim">${(g.total_sec/60).toFixed(1)} мин · ${g.count} реплик
+          ${g.ambiguous_count ? `· спорных ${g.ambiguous_count}` : ''}</span>
+      </div>
+      <div style="margin-top:6px">${core || '<span class="dim">ядро не выделено (нет векторов)</span>'}</div>
+      <div class="rsrow" style="margin-top:8px">
+        ${named ? `<button class="act" data-act="fok" data-i="${i}"
+            title="Подтвердить: это ${esc(g.label)}. Ядро уйдёт в эталоны, спорные пометки снимутся.">
+            ✓ да, это ${esc(g.label)}</button>` : ''}
+        ${picks}
+        <span class="dim">|</span>
+        <input data-role="nname" placeholder="новый человек" style="width:150px">
+        <button class="act" data-act="fnew" data-i="${i}">завести</button>
+        <button class="act" data-act="ftrash" data-i="${i}"
+          title="Весь кластер — шум или фон. Эталоны не создаются.">мусор</button>
+      </div>
+      ${edge ? `<div class="sub" style="margin-top:8px">спорные внутри кластера — послушайте,
+        если чужое, разберите в подробном разборе:${edge}</div>` : ''}
+      <div class="eres sub" style="margin-top:6px"></div>
+    </div>`;
+  }).join('') || '<div class="dim">в этой записи нет заметных кластеров</div>';
+}
+let FAST = null;
+
+// Приёмка кластера на быстром экране: имя всем репликам + ядро в эталоны.
+async function fastApply(card, name, mode){
+  const i = +card.dataset.i, g = FAST.groups[i], res = card.querySelector('.eres');
+  res.textContent = 'работаю…';
+  try {
+    if (name !== '[noise]' && FAST.has_audio){
+      let md = mode || 'existing';
+      for (const c of (g.core || [])){
+        await api('/api/enroll', {method:'POST', body:{recording_id: ERID,
+          start_sec: c.start_sec, end_sec: c.end_sec, speaker_name: name, mode: md, aliases: []}});
+        md = 'existing';
+      }
+    }
+    const r = await api('/api/enroll/rename_cluster', {method:'POST',
+      body:{recording_id: ERID, from_label: g.label, to_name: name}});
+    toast('Готово', `${speakerLabel(name)}: ${r.updated || g.count} реплик` +
+      (name !== '[noise]' && g.core ? `, эталонов +${g.core.length}` : ''), 'ok');
+    VPEOPLE = [];
+    await loadFast(ERID);
+  } catch (e){ res.style.color = 'var(--red)'; res.textContent = errText(e); }
 }
 
 async function loadPeople(){
@@ -1591,8 +1700,19 @@ function renderCandidates(){
         <button class="act" data-act="vqueue" data-i="${i}"${off}>▶ подряд</button>
       </div>
       <div class="sub" style="margin-top:4px">${g.match.length
-        ? 'матч по базе: ' + g.match.map(m => `${esc(m.name)} <b style="color:${cohCol(m.cos)}">${(+m.cos).toFixed(2)}</b>`).join(' · ')
+        ? 'похож на: ' + g.match.map(m => `<button class="act" data-act="epick" data-i="${i}" data-name="${esc(m.name)}"
+            title="Отдать все ${g.count} реплик этого голоса человеку «${esc(m.name)}» и добавить ядро кластера в его эталоны."
+            style="border-color:${cohCol(m.cos)}">${esc(m.name)} <b style="color:${cohCol(m.cos)}">${(+m.cos).toFixed(2)}</b></button>`).join(' ')
         : esc(g.match_error || 'база эталонов пуста')}</div>
+      ${g.core && g.core.length ? `<div class="sub" style="margin-top:6px">
+        <b>ядро голоса</b> — самые типичные реплики кластера; именно они уйдут в эталоны.
+        Послушайте их: если это один и тот же человек, кластеру можно верить целиком.
+        <div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:6px">${g.core.map(c => `
+          <button class="act" data-act="cplay" data-rid="${ECAND.recording_id}"
+            data-start="${c.start_sec}" data-end="${c.end_sec}"
+            title="${esc(c.text)}" style="font-weight:600">
+            ▶ ${(c.end_sec - c.start_sec).toFixed(1)}с · типичность ${c.typicality}</button>`).join('')}</div>
+      </div>` : ''}
       <div style="margin:8px 0">${g.top.map((t, ti) => {
         // экран 2: те же карточки фраз, «подтвердить» предлагает метку кластера
         const h = renderUtterance(t, {confirm: g.label});
@@ -1615,9 +1735,12 @@ function renderCandidates(){
 }
 
 async function enrollAct(card, kind){
-  // в эталон идёт самый длинный НЕспорный фрагмент (его выбрал бэкенд), а не просто первый
-  const g = ECAND.groups[+card.dataset.i], res = card.querySelector('.eres'),
-        best = g.enroll_span || g.top.find(t => !t.ambiguous) || g.top[0];
+  // В эталоны идёт ЯДРО кластера — реплики, ближайшие к его центроиду. Раньше брался
+  // самый длинный чистый фрагмент, но длинным он бывает из-за шума или чужой вставки,
+  // а типичность как раз и означает «так этот голос звучит обычно».
+  const g = ECAND.groups[+card.dataset.i], res = card.querySelector('.eres');
+  const spans = (g.core && g.core.length) ? g.core
+              : [g.enroll_span || g.top.find(t => !t.ambiguous) || g.top[0]].filter(Boolean);
   // поля берём ИЗ СТРОКИ КЛАСТЕРА: у каждой фразы внутри карточки свой [data-role="who"]
   const row = card.querySelector('.rsrow');
   let name = '', mode = 'existing', aliases = [];
@@ -1635,12 +1758,16 @@ async function enrollAct(card, kind){
   res.style.color = ''; res.textContent = 'работаю…';
   let msg = '';
   try {
-    if (kind !== 'trash' && best && ECAND.has_audio){
-      const e = await api('/api/enroll', {method:'POST', body:{
-        recording_id: ERID, start_sec: best.start_sec, end_sec: best.end_sec,
-        speaker_name: name, mode, aliases}});
-      msg = ` · стало ${e.samples_total} сэмплов (${e.active} активных) · coherence нового ${cohTxt(e.coherence)}` +
-            ` · новый матч фрагмента: ${e.match.map(m => m.name + ' ' + (+m.cos).toFixed(2)).join(' · ')}`;
+    if (kind !== 'trash' && spans.length && ECAND.has_audio){
+      let e = null, md = mode;
+      for (const sp of spans){
+        e = await api('/api/enroll', {method:'POST', body:{
+          recording_id: ERID, start_sec: sp.start_sec, end_sec: sp.end_sec,
+          speaker_name: name, mode: md, aliases}});
+        md = 'existing';     // человека заводим один раз, остальные ядра — к нему же
+      }
+      msg = ` · эталонов добавлено ${spans.length}, всего ${e.samples_total} (${e.active} активных)` +
+            ` · coherence последнего ${cohTxt(e.coherence)}`;
     }
     const r = await api('/api/enroll/rename_cluster', {method:'POST', body:{
       recording_id: ERID, from_label: g.label, to_name: name}});
@@ -1911,7 +2038,7 @@ document.addEventListener('click', async e => {
   const vb = e.target.closest('#vnav button');
   if (vb){
     const h = {people:'voices', enroll:'voices/enroll', sugg:'voices/suggestions',
-               unknown:'voices/unknown'}[vb.dataset.vsec];
+               unknown:'voices/unknown', fast:'voices/fast'}[vb.dataset.vsec];
     go(h, false).catch(() => {});
     return;
   }
@@ -2012,6 +2139,29 @@ document.addEventListener('click', async e => {
       // без подтверждения: пометка мусора — частое действие и легко откатывается
       // назначением человека, а модальное окно каждый раз только мешает разбирать
       else if (a === 'etrash') await enrollAct(card, 'trash');
+      else if (a === 'cplay') play({src: recSrc(b.dataset.rid), btn: b,
+        start: +b.dataset.start, end: +b.dataset.end, title: 'ядро кластера'});
+      else if (a === 'fok'){
+        const c2 = b.closest('.card');
+        await fastApply(c2, FAST.groups[+c2.dataset.i].label);
+      }
+      else if (a === 'fpick'){
+        const c2 = b.closest('.card');
+        await fastApply(c2, b.dataset.name);
+      }
+      else if (a === 'fnew'){
+        const c2 = b.closest('.card');
+        const nm = c2.querySelector('[data-role="nname"]').value.trim();
+        if (!nm){ c2.querySelector('.eres').textContent = 'введите имя'; return; }
+        await fastApply(c2, nm, 'new_speaker');
+      }
+      else if (a === 'ftrash') await fastApply(b.closest('.card'), '[noise]');
+      else if (a === 'epick'){
+        // кнопка кандидата: имя проставляется сразу, без похода в выпадающий список
+        const c2 = b.closest('.card'), sel = c2.querySelector('[data-role="who"]');
+        if (sel) sel.value = b.dataset.name;
+        await enrollAct(c2, 'who');
+      }
       else if (a === 'rep'){
         if (confirm('Переиграть запись #' + b.dataset.rid + ' с этапа ' + b.dataset.stage + '?')){
           await api('/api/recordings/' + b.dataset.rid + '/reprocess', {method: 'POST', body: {from_stage: b.dataset.stage}});

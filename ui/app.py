@@ -677,6 +677,29 @@ def sample_delete(sample_id: int):
 ANON_RE = r"^(s|speaker)[_ -]?([0-9]+|\?)$"
 
 
+@app.get("/api/review/queue")
+def review_queue():
+    """Записи, которые ещё ждут разметки, — самые «дешёвые» сверху.
+
+    Дешёвая — та, где мало кластеров без имени и много уже опознанного: разобрав её,
+    человек за пару кликов закрывает много речи. Записи, где всё названо и спорных
+    нет, из очереди уходят совсем.
+    """
+    rows = q("""
+        SELECT r.id, r.title, r.filename, r.duration_sec, r.started_at,
+               count(*) FILTER (WHERE s.speaker_name ~ '^S[0-9?]') AS unnamed,
+               count(*) FILTER (WHERE s.ambiguous) AS ambiguous,
+               count(*) AS segments,
+               coalesce(sum(s.end_sec - s.start_sec)
+                        FILTER (WHERE s.speaker_name ~ '^S[0-9?]'), 0) AS unnamed_sec
+          FROM recordings r JOIN segments s ON s.recording_id = r.id
+         GROUP BY r.id
+        HAVING count(*) FILTER (WHERE s.speaker_name ~ '^S[0-9?]' OR s.ambiguous) > 0
+         ORDER BY coalesce(sum(s.end_sec - s.start_sec)
+                           FILTER (WHERE s.speaker_name ~ '^S[0-9?]'), 0) DESC""")
+    return {"queue": [{**r, "unnamed_min": round(float(r["unnamed_sec"]) / 60, 1)} for r in rows]}
+
+
 @app.get("/api/enroll/candidates")
 def enroll_candidates(recording_id: int):
     rec, src = rec_audio(recording_id)
@@ -687,6 +710,13 @@ def enroll_candidates(recording_id: int):
                  WHERE s.recording_id = %s ORDER BY s.start_sec""", (recording_id,))
     names = {r["name"] for r in q("SELECT name FROM speakers")}
     refs = known_refs()
+    # векторы отдельным запросом: в общий список колонок их класть нельзя — это
+    # 192 float на каждую реплику, а нужны они только здесь
+    vec_by_id = {r["id"]: (json.loads(r["embedding"]) if isinstance(r["embedding"], str)
+                           else r["embedding"])
+                 for r in q("""SELECT id, embedding FROM segments
+                                WHERE recording_id = %s AND embedding IS NOT NULL""",
+                            (recording_id,))}
     groups = {}
     for s in segs:
         groups.setdefault(s["speaker_name"], []).append(s)
@@ -702,15 +732,47 @@ def enroll_candidates(recording_id: int):
         # оказаться чужой репликой, попавшей в кластер по ошибке провайдера
         clean = [s for s in items if not s["ambiguous"]] or items
         best = clean[0]
+
+        # ЯДРО кластера — реплики, ближайшие к его центроиду: самые типичные для
+        # этого голоса. Именно они годятся в эталоны, тогда как «самый длинный
+        # фрагмент» запросто оказывается длинным из-за шума или чужой вставки.
+        # Считается по сохранённым векторам, без аудио и без единого ffmpeg.
+        core, cent = [], None
+        vecs = [(x, np.array(vec_by_id[x["id"]], dtype=np.float64))
+                for x in items if x["id"] in vec_by_id]
+        if vecs:
+            M = np.array([v / (np.linalg.norm(v) or 1) for _, v in vecs])
+            c = M.mean(axis=0)
+            cent = c / (np.linalg.norm(c) or 1)
+            sims = M @ cent
+            order = np.argsort(-sims)
+            for i in order:
+                seg = vecs[int(i)][0]
+                if seg["end_sec"] - seg["start_sec"] < 2.0:
+                    continue          # короткий эталон только смазывает центроид
+                core.append({"id": seg["id"], "start_sec": seg["start_sec"],
+                             "end_sec": seg["end_sec"], "text": (seg["text"] or "")[:120],
+                             "typicality": round(float(sims[int(i)]), 3)})
+                if len(core) >= 3:
+                    break
+
+        # Матч — по ЦЕНТРОИДУ кластера, а не по одной реплике: усреднение по всем
+        # репликам заметно устойчивее. Одиночный фрагмент давал заниженную близость
+        # (на записи #24 — 0.48 против 0.87 по центроиду), и голос выглядел чужим.
         match, err = [], None
-        if src and refs:
+        if cent is not None and refs:
+            match = voice.top_matches(cent, refs, 3)
+        elif not refs:
+            err = "в базе нет эталонов"
+        elif src:
             try:
                 v = span_vec(best["id"], src, best["start_sec"], best["end_sec"])
                 match = voice.top_matches(v, refs, 3)
             except Exception as e:
                 err = str(e)[:200]
-        elif not src:
+        else:
             err = "аудио записи недоступно"
+
         out.append({
             "label": label,
             "known": label in names,
@@ -720,6 +782,7 @@ def enroll_candidates(recording_id: int):
             # именно этот фрагмент уйдёт в эталон при подтверждении (самый длинный чистый)
             "enroll_span": {"id": best["id"], "start_sec": best["start_sec"],
                             "end_sec": best["end_sec"]},
+            "core": core,                    # ядро: типичные реплики, кандидаты в эталоны
             "ambiguous_count": sum(1 for s in items if s["ambiguous"]),
             # уже разобранные человеком — чтобы в заголовке кластера было видно прогресс
             "confirmed_count": sum(1 for s in items if as_dict(s["detail"]).get("resolution")),
@@ -1428,12 +1491,17 @@ def progress():
                               coalesce(sum(duration_sec), 0) / 3600.0 AS hours
                          FROM recordings WHERE audio_path IS NOT NULL""") or {}
 
+    # Старый этап draft (whisper-черновик) засчитываем как пройденный детектор:
+    # у двух записей из прошлой эпохи пайплайна detect-джобы нет вовсе, и без этой
+    # поправки транскрипция обгоняла детектор — картина, невозможная по устройству
+    # конвейера, где каждая запись сначала проходит детект.
     done_by_stage = {r["stage"]: r for r in q("""
-        SELECT j.stage, count(DISTINCT r.id) AS recs,
+        SELECT CASE WHEN j.stage = 'draft' THEN 'detect' ELSE j.stage END AS stage,
+               count(DISTINCT r.id) AS recs,
                coalesce(sum(DISTINCT r.duration_sec), 0) / 3600.0 AS hours
           FROM jobs j JOIN recordings r ON r.id = j.recording_id
          WHERE j.status = 'done'
-         GROUP BY j.stage""")}
+         GROUP BY 1""")}
     running = {r["stage"]: r["n"] for r in q(
         "SELECT stage, count(*) AS n FROM jobs WHERE status='running' GROUP BY stage")}
     # Ошибки показываем ТОЛЬКО актуальные: у записей, которые сейчас в статусе failed.
