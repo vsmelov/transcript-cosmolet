@@ -174,13 +174,22 @@ def _cluster_utterances(utts: list[Utterance], join: float | None = None) -> lis
     for i, u in enumerate(utts):
         if i in taken:
             continue
+        ci = None
         if u.vec is not None:
-            ci = max(range(len(out)), key=lambda k: float(out[k]["cent"] @ u.vec))
+            best = max(range(len(out)), key=lambda k: float(out[k]["cent"] @ u.vec))
+            # Просто «ближайший» — плохой критерий: реплика чужого человека всё равно
+            # к кому-то ближе всех, и кластер собирал в себя посторонние голоса с
+            # похожестью 0.26. Не дотянула до порога — судим не по голосу.
+            if float(out[best]["cent"] @ u.vec) >= config.ATTACH_MIN_COS:
+                ci = best
         elif by_label.get(u.raw_speaker):
+            # Метка провайдера — запасной вариант ТОЛЬКО когда вектора нет вовсе.
+            # Если вектор есть и он не дотянул до порога, метке доверять тем более
+            # нельзя: именно так в кластер заезжали реплики с похожестью 0.13.
             hits = by_label[u.raw_speaker]
             ci = max(set(hits), key=hits.count)
-        else:
-            continue
+        if ci is None:
+            continue          # ни голос, ни метка не говорят — оставляем неопознанной
         out[ci]["members"].append(i)     # центроид НЕ трогаем: вектор коротыша шумный
         out[ci]["spoke"] += u.end - u.start
     for ci, c in enumerate(out):
