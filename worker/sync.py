@@ -9,23 +9,42 @@ from __future__ import annotations
 import json
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import config
 import db
 import plaud
 
+LOCAL = ZoneInfo(config.LOCAL_TZ)
 _UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
-def safe_name(title: str, started: str, file_id: str) -> str:
-    """Человекочитаемое имя файла: дата, название, короткий id для уникальности."""
+def start_utc(raw: str | None) -> datetime | None:
+    """Начало записи как момент времени в UTC.
+
+    Plaud присылает время в UTC; если пометки о зоне в строке нет, проставляем её
+    явно, а не полагаемся на зону процесса или базы — иначе переезд контейнера
+    в другую зону молча сдвинул бы все записи.
+    """
+    if not raw:
+        return None
     try:
-        dt = datetime.fromisoformat(started)
-        prefix = f"{dt:%Y-%m-%d_%H-%M}"
-    except Exception:
-        prefix = "unknown-date"
+        dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt).astimezone(timezone.utc)
+
+
+def safe_name(title: str, started: str, file_id: str) -> str:
+    """Человекочитаемое имя файла: дата, название, короткий id для уникальности.
+
+    Дата в имени — МЕСТНАЯ: облако называет записи по местному времени, и файл
+    с расхождением в четыре часа сбивал с толку при сверке с облаком.
+    """
+    dt = start_utc(started)
+    prefix = f"{dt.astimezone(LOCAL):%Y-%m-%d_%H-%M}" if dt else "unknown-date"
     clean = _UNSAFE.sub("", title or "").strip()
     clean = re.sub(r"\s+", "_", clean)[:60] or "recording"
     return f"{prefix}_{clean}_{file_id[:8]}.mp3"
@@ -59,12 +78,13 @@ def sync(log=print) -> dict:
             dur = float(it.get("duration") or 0) / 1000.0
             meta = {"plaud_file_id": fid, "source": "plaud",
                     "serial_number": it.get("serial_number"),
-                    "cloud_name": title}
+                    "cloud_name": title,
+                    "start_at_raw": it.get("start_at")}   # как прислало облако, для сверки
             db.q("""INSERT INTO recordings
                     (filename, title, source, duration_sec, started_at, status, meta)
                     VALUES (%s,%s,'plaud',%s,%s,'pending_download',%s::jsonb)""",
                  safe_name(title, it.get("start_at") or "", fid), title, dur,
-                 it.get("start_at"), json.dumps(meta, ensure_ascii=False))
+                 start_utc(it.get("start_at")), json.dumps(meta, ensure_ascii=False))
             added += 1
         if len(items) < 100:
             break

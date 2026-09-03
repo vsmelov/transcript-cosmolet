@@ -1460,7 +1460,10 @@ async function loadJoinScan(rid){
         <span class="nm">${r.join}${r.join === best.join ? ' ★' : ''}</span>
         <span style="flex:1">${who}</span>
         <span class="num">${r.clusters} голосов · опознано ${r.named_min} мин</span>
-        <button class="act" data-act="setjoin" data-rid="${rid}" data-join="${r.join}">применить</button>
+        <button class="act" data-act="setjoin" data-rid="${rid}" data-join="${r.join}"
+          title="Запомнить порог ${r.join} для этой записи и заново разделить голоса.
+Локально и бесплатно, обычно пара минут. Транскрипт и границы реплик не меняются — только кто их сказал.
+Ваши подтверждения и эталоны голосов сохраняются.">применить</button>
       </div>`;
     }).join('') +
     `<div class="rsrow"><button class="act" data-act="setjoin" data-rid="${rid}" data-join="">
@@ -1832,7 +1835,8 @@ document.addEventListener('click', async e => {
       else if (a === 'setjoin'){
         const j = b.dataset.join === '' ? null : +b.dataset.join;
         await api(`/api/recordings/${b.dataset.rid}/join`, {method:'POST', body:{join: j}});
-        showHint(j == null ? 'вернул автоподбор, пересчитываю…' : `порог ${j}, пересчитываю…`);
+        showHint((j == null ? 'вернул автоподбор' : `порог ${j}`) +
+          ' — заново разделяю голоса, это займёт пару минут; подтверждения сохранены');
       }
       else if (a === 'vabout'){
         const t = $('aboutBox').value;

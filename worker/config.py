@@ -27,6 +27,12 @@ SCRIBE_MODEL = os.environ.get("SCRIBE_MODEL", "scribe_v2")
 
 DAILY_BUDGET_USD = float(os.environ.get("DAILY_BUDGET_USD", "2.0"))
 
+# Время начала записи Plaud отдаёт в UTC — проверено на ночных записях: у записи с
+# start_at 09-02 22:51 облако ставит в название «09-03», и с поправкой +4 это 02:51
+# ночи, что сходится с одиннадцатичасовой длительностью. Названия же облако делает
+# по МЕСТНОМУ времени, поэтому для человекочитаемых имён и транскриптов держим зону.
+LOCAL_TZ = os.environ.get("LOCAL_TZ", "Asia/Dubai")
+
 # Синхронизация с облаком Plaud: токены создаёт `plaud login` на хосте, в контейнер
 # файл монтируется. Публичного API нет — ходим тем же путём, что официальный CLI.
 PLAUD_TOKENS = os.environ.get("PLAUD_TOKENS", "/plaud/tokens.json")

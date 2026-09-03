@@ -18,6 +18,10 @@ _client = httpx.Client(timeout=600, trust_env=False)
 RETRY_STATUS = {408, 409, 425, 429, 500, 502, 503, 504, 520, 521, 522, 524, 529}
 
 
+class QuotaExceeded(RuntimeError):
+    """Кончились оплаченные кредиты провайдера — не ошибка записи, а ожидание денег."""
+
+
 class ApiError(RuntimeError):
     """Ошибка API с телом ответа: без него по одному коду 400 диагноз не поставить."""
 
@@ -40,6 +44,10 @@ def _post(name: str, url: str, tries: int = 5, **kw) -> httpx.Response:
             r = _client.post(url, **kw)
             if r.status_code < 400:
                 return r
+            if "quota_exceeded" in r.text:
+                # Повторять бессмысленно: квота не восстановится за секунды. Пусть
+                # запись вернётся в очередь и подождёт пополнения, а не сгорит в failed.
+                raise QuotaExceeded(f"{name}: {r.text[:200]}")
             if r.status_code not in RETRY_STATUS and r.status_code != 400:
                 raise ApiError(name, r.status_code, r.text)
             if attempt == tries:

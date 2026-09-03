@@ -101,3 +101,18 @@ CREATE TABLE costs (
 );
 CREATE INDEX costs_day_idx ON costs(day);
 ALTER TABLE recordings ADD COLUMN IF NOT EXISTS title text;  -- человеческое название (из Plaud или имени файла)
+
+-- Ручные решения пользователя о том, кто говорит. Живут ОТДЕЛЬНО от segments:
+-- переигрывание опознания стирает и пересоздаёт сегменты, и без этой таблицы
+-- разметка терялась бы при каждой смене порога склейки. Привязка по времени, а
+-- не по id сегмента, — границы реплик от прогона к прогону меняются.
+CREATE TABLE manual_labels (
+    id           bigserial PRIMARY KEY,
+    recording_id int NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
+    start_sec    real NOT NULL,
+    end_sec      real NOT NULL,
+    speaker_name text NOT NULL,
+    note         text NOT NULL DEFAULT '',
+    created_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX manual_labels_rec_idx ON manual_labels(recording_id);

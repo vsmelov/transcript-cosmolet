@@ -838,6 +838,13 @@ def confirm_segment(body: dict):
             c.execute("""UPDATE conflicts SET status='resolved', resolved_name=%s,
                          resolved_by='user', resolved_at=now()
                          WHERE segment_id = %s AND status='open'""", (name, seg["id"]))
+            # Решение человека храним отдельно от сегментов: переигрывание опознания
+            # пересоздаёт segments, и иначе ручная разметка исчезала бы при каждой
+            # смене порога склейки. Привязка по времени — границы реплик плавают.
+            c.execute("""INSERT INTO manual_labels
+                         (recording_id, start_sec, end_sec, speaker_name, note)
+                         VALUES (%s,%s,%s,%s,%s)""",
+                      (seg["recording_id"], seg["start_sec"], seg["end_sec"], name, note))
     _run(run)
     out = segments_by_ids([seg["id"]])
     return {**res, "segment_id": seg["id"], "confirmed": True, "name": name,
@@ -1421,9 +1428,16 @@ def progress():
     # Ошибки показываем ТОЛЬКО актуальные: у записей, которые сейчас в статусе failed.
     # Историю падений считать бессмысленно — почти все они уже переиграны после
     # починок, и в шапке это выглядело так, будто всё разваливается.
+    # Ошибки — ТОЛЬКО по последней попытке каждой стадии. Раньше считались все
+    # исторические падения записи, и после починки скачивание показывало «16 ошибок»
+    # при полностью скачанных 46 файлах: старые записи о давно исправленных сбоях.
     failed = {r["stage"]: r["n"] for r in q("""
-        SELECT j.stage, count(*) AS n FROM jobs j JOIN recordings r ON r.id = j.recording_id
-         WHERE j.status = 'failed' AND r.status = 'failed' GROUP BY j.stage""")}
+        SELECT stage, count(*) AS n FROM (
+            SELECT DISTINCT ON (j.recording_id, j.stage) j.stage, j.status
+              FROM jobs j JOIN recordings r ON r.id = j.recording_id
+             WHERE r.status = 'failed'
+             ORDER BY j.recording_id, j.stage, j.id DESC) t
+         WHERE t.status = 'failed' GROUP BY stage""")}
     retried = q1("""SELECT count(*) AS n FROM jobs j JOIN recordings r ON r.id = j.recording_id
                      WHERE j.status='failed' AND r.status <> 'failed'""") or {}
 

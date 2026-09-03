@@ -257,6 +257,8 @@ def run_stage(stage: str, rec) -> None:
             db.job_done(job, 0.0, str(md))
             log(f"=== готово #{rec_id}: {md}")
         db.q("UPDATE recordings SET status=%s WHERE id=%s", STAGES[stage]["next"], rec_id)
+    except clients.QuotaExceeded:
+        raise                       # обрабатывается в stage_loop: запись ждёт, не падает
     except Exception as exc:
         db.q("UPDATE recordings SET status='failed' WHERE id=%s", rec_id)
         log(f"!!! #{rec_id} на этапе {stage}: {exc}")
@@ -282,7 +284,16 @@ def stage_loop(stage: str, num: int) -> None:
                 continue
             rec = claim(stage)
             if rec:
-                run_stage(stage, rec)
+                try:
+                    run_stage(stage, rec)
+                except clients.QuotaExceeded as exc:
+                    # Деньги у провайдера кончились: возвращаем запись в очередь как
+                    # была и ждём. Иначе за минуту вся очередь ушла бы в failed по
+                    # причине, которая к самим записям отношения не имеет.
+                    db.q("UPDATE recordings SET status=%s WHERE id=%s",
+                         STAGES[stage]["wait"], rec[0])
+                    log(f"{stage}: кончилась квота провайдера, пауза 10 мин — {exc}")
+                    time.sleep(600)
             else:
                 time.sleep(POLL_SEC)
         except Exception:
