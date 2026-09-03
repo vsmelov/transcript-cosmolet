@@ -990,17 +990,31 @@ async function bulkApply(name){
   if (ids.length > 10 && !confirm(`Подтвердите: ${what}.\nЭто затронет ${ids.length} реплик и закроет их конфликты.`))
     return;
   const enroll = name === '[noise]' ? 'none' : $('bulkEnroll').value;
+  // Показываем, что работа началась: с режимом «эталоны из всех» бэкенд режет
+  // аудио на каждую реплику, и пауза в несколько секунд выглядела как «кнопка
+  // не нажалась» — при том что запрос уходил и отрабатывал.
+  const t = toast('Применяю…', `${speakerLabel(name)}: ${ph}`, null, 0);
+  let r;
   try {
-    const r = await api('/api/segments/bulk', {method:'POST', body:{ids, name, enroll}});
+    r = await api('/api/segments/bulk', {method:'POST', body:{ids, name, enroll}});
+  } catch (e){
+    t.set('Не получилось', errText(e), 'err');
+    return;
+  }
+  try {
     SEL.clear(); bulkSync();
-    toast('Готово', `${name}: обновлено реплик ${r.updated}` +
+    t.set('Готово', `${name}: обновлено реплик ${r.updated}` +
       (r.conflicts_closed ? `, закрыто спорных ${r.conflicts_closed}` : '') +
       (r.enrolled_added ? `, добавлено эталонов ${r.enrolled_added}` +
         (r.enrolled ? ` (всего у человека ${r.enrolled.samples_total})` : '') : '') +
-      (r.enroll_error ? `. Часть эталонов не вышла: ${r.enroll_error}` : ''), 'ok', 9000);
+      (r.enroll_error ? `. Часть эталонов не вышла: ${r.enroll_error}` : ''), 'ok');
     afterEdit();
     await refreshScreen();
-  } catch (e){}
+  } catch (e){
+    // данные уже записаны — сообщаем, что не удалось именно обновить экран,
+    // иначе молчаливый catch выглядит как «ничего не произошло»
+    toast('Экран не обновился', errText(e) + ' — перезагрузите страницу', 'err', 8000);
+  }
 }
 
 // перечитать тот экран, на котором пользователь сейчас стоит
