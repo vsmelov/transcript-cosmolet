@@ -105,7 +105,7 @@ tr.hl td{background:var(--hl);box-shadow:inset 0 1px 0 var(--acc),inset 0 -1px 0
       <button data-vsec="enroll">Разметка записи</button>
       <button data-vsec="sugg">Предложения</button>
     </div>
-    <audio id="vAudio" controls preload="none"></audio>
+    <audio id="vAudio" controls preload="metadata"></audio>
     <div id="vsec-people" class="vsec" style="display:flex;gap:16px;align-items:flex-start">
       <div id="peopleList" style="flex:0 0 250px"><div class="dim">загрузка…</div></div>
       <div id="personCard" style="flex:1;min-width:0"><div class="dim">выберите человека слева</div></div>
@@ -507,14 +507,21 @@ async function resolveConflict(cid, name){
 // ---------- Голоса: общий плеер ----------
 function playSpan(rid, start, end){
   const a = $('vAudio'), src = '/api/audio/' + rid;
-  if (!a.src || !a.src.endsWith(src)) a.src = src;
+  const fresh = !a.src || !a.src.endsWith(src);
   VSTOP = (end != null && +end > +start) ? +end : null;
   const go = () => { try { a.currentTime = +start; } catch (e) {} a.play().catch(() => {}); };
-  if (a.readyState >= 1) go(); else a.addEventListener('loadedmetadata', go, {once: true});
+  if (!fresh && a.readyState >= 1){ go(); return; }
+  if (fresh) a.src = src;
+  // без load() браузер не начнёт качать метаданные и loadedmetadata не наступит
+  a.addEventListener('loadedmetadata', go, {once: true});
+  a.load();
 }
 function playSample(sid){
   const a = $('vAudio');
-  VSTOP = null; a.src = '/api/speakers/sample/' + sid; a.play().catch(() => {});
+  VSTOP = null;
+  a.src = '/api/speakers/sample/' + sid;
+  a.load();
+  a.play().catch(() => {});
 }
 $('vAudio').addEventListener('timeupdate', () => {
   const a = $('vAudio');
@@ -819,7 +826,7 @@ document.addEventListener('click', async e => {
         const v = (inp && inp.value || '').trim();
         if (v) await resolveConflict(+b.dataset.cid, v);
       }
-      else if (a === 'smp'){ const au = $('spAudio'); au.src = '/api/speakers/sample/' + b.dataset.sid; au.play().catch(() => {}); }
+      else if (a === 'smp'){ const au = $('spAudio'); au.src = '/api/speakers/sample/' + b.dataset.sid; au.load(); au.play().catch(() => {}); }
       else if (a === 'playat'){ if (PEND_T != null) seekPlay(PEND_T); }
       else if (a === 'person') await openPerson(+b.dataset.id, true);
       else if (a === 'vplay') playSample(b.dataset.sid);

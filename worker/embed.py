@@ -23,17 +23,41 @@ def extractor():
     return _extractor
 
 
-def embed_span(src: Path, start: float, dur: float) -> np.ndarray:
-    """Нормированный вектор голоса для куска [start, start+dur] исходного файла."""
+def _vector(samples: np.ndarray) -> np.ndarray:
     ext = extractor()
-    with tempfile.TemporaryDirectory() as td:
-        samples = audio_mod.to_wav16k(src, Path(td) / "x.wav", start, min(dur, config.EMBED_CLIP_MAX_SEC))
     s = ext.create_stream()
     s.accept_waveform(16000, samples)
     s.input_finished()
     v = np.array(ext.compute(s), dtype=np.float64)
     n = np.linalg.norm(v)
     return v / n if n else v
+
+
+def embed_span(src: Path, start: float, dur: float) -> np.ndarray:
+    """Нормированный вектор голоса для куска [start, start+dur] исходного файла."""
+    with tempfile.TemporaryDirectory() as td:
+        samples = audio_mod.to_wav16k(src, Path(td) / "x.wav", start, min(dur, config.EMBED_CLIP_MAX_SEC))
+    return _vector(samples)
+
+
+class AudioCache:
+    """Весь файл один раз в память как wav16k — дальше куски режутся срезами.
+
+    Отдельный ffmpeg на каждую реплику (их сотни) превращал этап опознания
+    в десятки минут; здесь одна конвертация и мгновенные срезы numpy.
+    """
+
+    def __init__(self, src: Path):
+        with tempfile.TemporaryDirectory() as td:
+            self.samples = audio_mod.to_wav16k(src, Path(td) / "full.wav")
+        self.sr = 16000
+
+    def embed(self, start: float, dur: float) -> np.ndarray:
+        a = max(0, int(start * self.sr))
+        b = min(len(self.samples), a + int(min(dur, config.EMBED_CLIP_MAX_SEC) * self.sr))
+        if b - a < int(0.5 * self.sr):      # слишком короткий кусок — вектор бессмысленен
+            raise ValueError("кусок короче 0.5с")
+        return _vector(self.samples[a:b])
 
 
 def known_speakers() -> dict[str, np.ndarray]:

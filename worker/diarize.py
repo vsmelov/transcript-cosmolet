@@ -62,11 +62,12 @@ def utterances_from_scribe(resp: dict, offset: float, chunk_tag: str) -> list[Ut
 
 def assign_speakers(utts: list[Utterance], src: Path, base: dict[str, np.ndarray]) -> dict:
     """Эмбеддинги -> кластеры -> имена. Возвращает сводку кластеров для артефакта."""
-    # 1) вектор каждой достаточно длинной реплики
+    # 1) вектор каждой достаточно длинной реплики (файл декодируется один раз)
+    cache = embed_mod.AudioCache(src)
     for u in utts:
         if u.end - u.start >= config.MIN_EMBED_SEC:
             try:
-                u.vec = embed_mod.embed_span(src, u.start, u.end - u.start)
+                u.vec = cache.embed(u.start, u.end - u.start)
             except Exception:
                 u.vec = None
 

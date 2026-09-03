@@ -23,6 +23,7 @@ import store
 
 AUDIO_EXT = {".m4a", ".mp3", ".wav", ".ogg", ".oga", ".opus", ".webm", ".flac", ".mp4", ".mov"}
 POLL_SEC = 10
+_SIZES: dict[str, int] = {}   # имя -> размер на прошлом проходе (детект «файл ещё пишется»)
 
 
 def log(*a):
@@ -47,6 +48,13 @@ def intake() -> None:
     for f in sorted(config.INBOX.iterdir()) if config.INBOX.exists() else []:
         if not f.is_file() or f.suffix.lower() not in AUDIO_EXT:
             continue
+        # файл может ещё скачиваться/копироваться: берём только когда размер
+        # перестал меняться между проходами и он ненулевой
+        size = f.stat().st_size
+        if size == 0 or _SIZES.get(f.name) != size:
+            _SIZES[f.name] = size
+            continue
+        _SIZES.pop(f.name, None)
         try:
             dur = audio_mod.duration(f)
         except Exception as exc:
@@ -61,6 +69,16 @@ def intake() -> None:
                 meta = json.loads(sidecar.read_text(encoding="utf-8"))
             except Exception:
                 meta = {}
+
+        # дедупликация: тот же файл (имя+размер) уже принят — не заводим вторую запись
+        dup = db.q1("""SELECT id FROM recordings
+                       WHERE filename LIKE %s AND size_bytes = %s LIMIT 1""",
+                    f"{f.stem}%{f.suffix}", size)
+        if dup:
+            log(f"дубль (уже запись #{dup[0]}), файл в failed:", f.name)
+            shutil.move(str(f), config.FAILED / f.name)
+            sidecar.unlink(missing_ok=True)
+            continue
 
         dest = config.AUDIO / f.name
         if dest.exists():
@@ -178,11 +196,27 @@ def process(rec) -> None:
         log(f"!!! ошибка #{rec_id}: {exc}")
 
 
+def recover_zombies() -> None:
+    """После рестарта контейнера незавершённые джобы висят в running навсегда.
+
+    Помечаем их прерванными, а сами записи возвращаем в очередь: этапы, которые
+    уже успели записать артефакт, переигрываться не будут (см. reprocess_from).
+    """
+    rows = db.q("""UPDATE jobs SET status='failed', finished_at=now(),
+                   error=COALESCE(error,'') || ' [прервано рестартом воркера]'
+                   WHERE status='running' RETURNING recording_id""") or []
+    if rows:
+        ids = sorted({r[0] for r in rows})
+        db.q("UPDATE recordings SET status='new' WHERE id = ANY(%s) AND status='processing'", ids)
+        log(f"после рестарта возвращено в очередь записей: {ids}")
+
+
 def main() -> None:
     for d in (config.INBOX, config.IN_PROGRESS, config.DONE, config.FAILED,
               config.ARTIFACTS, config.AUDIO):
         d.mkdir(parents=True, exist_ok=True)
     log("воркер запущен, бюджет/день:", config.DAILY_BUDGET_USD)
+    recover_zombies()
     while True:
         try:
             intake()

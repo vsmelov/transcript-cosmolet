@@ -29,9 +29,13 @@ def main() -> None:
     INBOX.mkdir(parents=True, exist_ok=True)
     dest = INBOX / name
 
+    # качаем во временное имя и переименовываем: воркер не должен увидеть недокачанный файл
+    tmp = dest.with_suffix(dest.suffix + ".part")
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # мимо системного прокси
-    with opener.open(url, timeout=600) as r, open(dest, "wb") as f:
-        f.write(r.read())
+    with opener.open(url, timeout=900) as r, open(tmp, "wb") as f:
+        while chunk := r.read(1 << 20):
+            f.write(chunk)
+    tmp.replace(dest)
 
     dest.with_suffix(dest.suffix + ".meta.json").write_text(json.dumps({
         "title": title,
