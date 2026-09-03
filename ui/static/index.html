@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>cosmolet</title>
+<style>
+:root{--bg:#0f1115;--panel:#161a22;--panel2:#1c2130;--border:#252b3b;--text:#e6e6e6;--dim:#8891a7;--acc:#7aa2f7;--red:#f7768e;--green:#9ece6a;--yellow:#e0af68}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,"Segoe UI",Roboto,sans-serif}
+header{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);z-index:5}
+h1{font-size:16px;margin:0;color:var(--acc)}
+h3{margin:20px 0 8px;font-size:14px;color:var(--dim);font-weight:600}
+nav{display:flex;gap:4px}
+nav button{background:none;border:1px solid transparent;color:var(--dim);padding:6px 12px;border-radius:6px;cursor:pointer;font:inherit}
+nav button.on{color:var(--text);background:var(--panel);border-color:var(--border)}
+#err{color:var(--red);font-size:12px;margin-left:auto}
+#costBadge{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--green);font-variant-numeric:tabular-nums;white-space:nowrap}
+main{padding:16px;max-width:1200px;margin:0 auto}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;color:var(--dim);font-weight:500;font-size:12px;padding:6px 8px;border-bottom:1px solid var(--border)}
+td{padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+tr[data-act]{cursor:pointer}
+tr[data-act]:hover td{background:var(--panel)}
+.st{display:inline-block;padding:1px 8px;border-radius:9px;font-size:12px;border:1px solid var(--border)}
+.st-new{color:var(--acc)}.st-processing,.st-running{color:var(--yellow)}.st-done{color:var(--green)}.st-failed{color:var(--red)}.st-pending,.st-skipped{color:var(--dim)}
+button.act{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:3px 10px;cursor:pointer;font:inherit;font-size:12px}
+button.act:hover{border-color:var(--acc)}
+input{background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:3px 8px;font:inherit;font-size:12px;width:130px}
+select{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font:inherit;max-width:100%}
+audio{width:100%;margin:10px 0;display:block}
+a{color:var(--acc)}
+.dim{color:var(--dim)}
+.errtxt{color:var(--red)}
+.mono{font-variant-numeric:tabular-nums}
+.cards{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:12px 16px;min-width:130px}
+.card .v{font-size:20px;color:var(--acc);font-variant-numeric:tabular-nums}
+.pipe{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin:6px 0}
+.stage{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;min-width:170px;font-size:12px}
+.arr{align-self:center;color:var(--dim)}
+.seg{padding:5px 10px;border:1px solid transparent;border-radius:6px;cursor:pointer;display:flex;gap:10px;align-items:baseline}
+.seg:hover{background:var(--panel)}
+.seg.amb{border-color:var(--red)}
+.seg .t{color:var(--dim);font-variant-numeric:tabular-nums;flex:none}
+.spk{font-weight:600;flex:none}
+.badge{font-size:11px;border:1px solid var(--border);border-radius:8px;padding:0 6px;color:var(--dim);flex:none;white-space:nowrap}
+.badge.bad{color:var(--red);border-color:var(--red)}
+.txt{flex:1;min-width:0}
+.pan{margin:2px 0 10px 78px;padding:10px;background:var(--panel);border:1px solid var(--border);border-radius:6px;font-size:13px}
+.rsrow{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:8px}
+.cand span{margin-right:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>cosmolet</h1>
+  <nav>
+    <button data-tab="jobs" class="on">Jobs</button>
+    <button data-tab="tr">Транскрипт</button>
+    <button data-tab="disk">Диск</button>
+    <button data-tab="sp">Спикеры</button>
+  </nav>
+  <span id="err"></span>
+  <span id="costBadge">…</span>
+</header>
+<main>
+  <section id="tab-jobs" class="tab">
+    <table>
+      <thead><tr><th>ID</th><th>Файл</th><th>Статус</th><th>Длит.</th><th>Размер</th><th>Сегм.</th><th>Конфл.</th><th>Стоимость</th><th>Создана</th></tr></thead>
+      <tbody id="jobsBody"><tr><td colspan="9" class="dim">загрузка…</td></tr></tbody>
+    </table>
+  </section>
+
+  <section id="tab-tr" class="tab" style="display:none">
+    <select id="recSel"><option value="">— запись —</option></select>
+    <div id="trWrap" style="display:none">
+      <audio id="trAudio" controls preload="metadata"></audio>
+      <div id="segList"></div>
+    </div>
+  </section>
+
+  <section id="tab-disk" class="tab" style="display:none">
+    <div class="cards" id="diskCards"><div class="dim">загрузка…</div></div>
+    <h3>Топ-15 файлов</h3>
+    <table>
+      <thead><tr><th style="width:90px">МБ</th><th>Путь</th></tr></thead>
+      <tbody id="diskTop"></tbody>
+    </table>
+  </section>
+
+  <section id="tab-sp" class="tab" style="display:none">
+    <audio id="spAudio" controls preload="none" style="max-width:420px"></audio>
+    <div class="cards" id="spkList"><div class="dim">загрузка…</div></div>
+    <h3>Конфликты</h3>
+    <div class="cards" id="confList"></div>
+  </section>
+</main>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+let TAB = 'jobs', RECS = [], SEGS = [], SPK = [], CONF_BY_SEG = {}, OPEN = null;
+
+// ---------- утилиты ----------
+const esc = s => (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtT = s => { s = Math.max(0, Math.floor(+s || 0)); return [s/3600|0, (s/60|0)%60, s%60].map(n => String(n).padStart(2,'0')).join(':'); };
+const fmtUsd = v => '$' + (+v || 0).toFixed(4);
+const fmtBytes = b => b == null ? '—' : (b >= 1073741824 ? (b/1073741824).toFixed(2)+' ГБ' : (b/1048576).toFixed(1)+' МБ');
+const fmtDT = s => s ? new Date(s).toLocaleString('ru-RU', {hour12:false}) : '—';
+const hue = n => { let h = 0; for (const c of String(n || '')) h = (h*31 + c.charCodeAt(0)) >>> 0; return h % 360; };
+const spkCol = n => `hsl(${hue(n)},60%,70%)`;
+
+let errT;
+function showErr(m){ $('err').textContent = m; clearTimeout(errT); errT = setTimeout(() => $('err').textContent = '', 6000); }
+
+async function api(path, opts = {}){
+  const o = {method: opts.method || 'GET', headers: {}};
+  if (opts.body){ o.headers['Content-Type'] = 'application/json'; o.body = JSON.stringify(opts.body); }
+  const r = await fetch(path, o);
+  if (!r.ok){
+    let msg = r.status; try { msg = (await r.json()).detail || msg; } catch (e) {}
+    showErr('API: ' + msg); throw new Error(msg);
+  }
+  return r.json();
+}
+
+// ---------- вкладки ----------
+function showTab(t){
+  TAB = t;
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+  document.querySelectorAll('.tab').forEach(s => s.style.display = (s.id === 'tab' + '-' + t) ? '' : 'none');
+  const load = {jobs: loadJobs, tr: initTr, disk: loadDisk, sp: loadSp}[t];
+  if (load) load().catch(() => {});
+}
+
+// ---------- Jobs ----------
+async function loadCosts(){
+  const c = await api('/api/costs/today');
+  $('costBadge').textContent = 'сегодня ' + fmtUsd(c.today_usd) + ' · всего ' + fmtUsd(c.total_usd);
+}
+
+async function loadJobs(){
+  RECS = await api('/api/recordings');
+  renderJobs();
+  if (OPEN != null) loadDetail(OPEN).catch(() => {});
+  loadCosts().catch(() => {});
+}
+
+function renderJobs(){
+  const rows = RECS.map(r => {
+    let h = `<tr data-act="row" data-rid="${r.id}">
+      <td class="mono">${r.id}</td>
+      <td>${esc(r.filename)}</td>
+      <td><span class="st st-${esc(r.status)}">${esc(r.status)}</span></td>
+      <td class="mono">${fmtT(r.duration_sec)}</td>
+      <td class="mono">${fmtBytes(r.size_bytes)}</td>
+      <td class="mono">${r.segments}</td>
+      <td class="mono${r.open_conflicts > 0 ? ' errtxt' : ' dim'}">${r.open_conflicts}</td>
+      <td class="mono">${fmtUsd(r.cost_usd)}</td>
+      <td class="dim mono">${fmtDT(r.created_at)}</td></tr>`;
+    if (OPEN === r.id)
+      h += `<tr><td colspan="9"><div id="recdet" class="dim">загрузка…</div></td></tr>`;
+    return h;
+  }).join('');
+  $('jobsBody').innerHTML = rows || '<tr><td colspan="9" class="dim">записей нет</td></tr>';
+}
+
+function toggleRec(id){
+  OPEN = (OPEN === id) ? null : id;
+  renderJobs();
+  if (OPEN != null) loadDetail(OPEN).catch(() => {});
+}
+
+async function loadDetail(id){
+  const d = await api('/api/recordings/' + id);
+  const el = $('recdet');
+  if (!el || OPEN !== id) return;
+  const pipe = d.jobs.map(stageCard).join('<div class="arr">→</div>') || '<span class="dim">этапов нет</span>';
+  const rep = ['draft','quality','resolve'].map(s =>
+    `<button class="act" data-act="rep" data-rid="${id}" data-stage="${s}">↻ переиграть с ${s}</button>`).join(' ');
+  el.classList.remove('dim');
+  el.innerHTML = `<div class="pipe">${pipe}</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 8px">${rep}</div>`;
+}
+
+function stageCard(j){
+  const dur = (j.started_at && j.finished_at)
+    ? ((new Date(j.finished_at) - new Date(j.started_at)) / 1000).toFixed(1) + 'с' : '';
+  return `<div class="stage">
+    <div><b>${esc(j.stage)}</b> <span class="st st-${esc(j.status)}">${esc(j.status)}</span></div>
+    <div class="dim mono">${j.started_at ? fmtDT(j.started_at) : '—'}${j.finished_at ? ' → ' + fmtDT(j.finished_at) : ''}${dur ? ' · ' + dur : ''}</div>
+    <div class="mono">${fmtUsd(j.cost_usd)}</div>
+    ${j.artifact_path ? `<div><a href="/api/artifacts/${j.id}" target="_blank" rel="noopener">артефакт</a></div>` : ''}
+    ${j.error ? `<div class="errtxt" title="${esc(j.error)}">${esc(String(j.error).slice(0, 200))}</div>` : ''}
+  </div>`;
+}
+
+// ---------- Транскрипт ----------
+async function initTr(){
+  if (!RECS.length) RECS = await api('/api/recordings');
+  const sel = $('recSel'), cur = sel.value;
+  sel.innerHTML = '<option value="">— запись —</option>' +
+    RECS.map(r => `<option value="${r.id}">#${r.id} · ${esc(r.filename)} (${esc(r.status)})</option>`).join('');
+  if (cur) sel.value = cur;
+}
+
+async function loadSegments(){
+  const rid = $('recSel').value;
+  if (!rid){ $('trWrap').style.display = 'none'; return; }
+  const [segs, confs, spk] = await Promise.all([
+    api('/api/recordings/' + rid + '/segments'),
+    api('/api/conflicts?status=open'),
+    api('/api/speakers'),
+  ]);
+  SEGS = segs; SPK = spk;
+  CONF_BY_SEG = {};
+  confs.forEach(c => { CONF_BY_SEG[c.segment_id] = c.id; });
+  const au = $('trAudio'), src = '/api/audio/' + rid;
+  if (!au.src.endsWith(src)) au.src = src;
+  $('trWrap').style.display = '';
+  $('segList').innerHTML = SEGS.map(segHtml).join('') || '<div class="dim">сегментов нет</div>';
+}
+
+function segHtml(s, i){
+  const low = s.confidence != null && s.confidence < 0.7;
+  let badges = '';
+  if (s.confidence != null) badges += `<span class="badge${low ? ' bad' : ''}">${(+s.confidence).toFixed(2)}</span>`;
+  if (s.inherited) badges += '<span class="badge">насл.</span>';
+  const tog = s.ambiguous ? `<button class="act" data-act="tog" data-i="${i}">разбор</button>` : '';
+  return `<div class="seg${s.ambiguous ? ' amb' : ''}" data-t="${+s.start_sec}">
+      <span class="t">${fmtT(s.start_sec)}</span>
+      <span class="spk" style="color:${spkCol(s.speaker_name)}">${esc(s.speaker_name)}</span>
+      ${badges}
+      <span class="txt"${low ? ' style="opacity:.55"' : ''} title="asr_logprob: ${s.asr_logprob != null ? (+s.asr_logprob).toFixed(3) : '—'}">${esc(s.text)}</span>
+      ${tog}
+    </div>` + (s.ambiguous ? panelHtml(s, i) : '');
+}
+
+function panelHtml(s, i){
+  const d = s.detail || {}, cid = CONF_BY_SEG[s.id];
+  let h = `<div class="pan" id="pan${i}" style="display:none">`;
+  if (Array.isArray(d.top) && d.top.length)
+    h += '<div class="cand">top: ' + d.top.map(t =>
+      `<span style="color:${spkCol(t.name)}">${esc(t.name)} · cos ${(+t.cos).toFixed(2)}</span>`).join('') + '</div>';
+  if (d.cluster_default)
+    h += `<div class="dim">cluster_default: ${esc(d.cluster_default.name)} · ${(+d.cluster_default.cos).toFixed(2)}</div>`;
+  if (d.resolution) h += `<div class="dim">resolution: ${esc(d.resolution)}</div>`;
+  if (cid) h += resolveRow(cid);
+  else h += '<div class="dim">открытого конфликта нет</div>';
+  return h + '</div>';
+}
+
+function resolveRow(cid){
+  return '<div class="rsrow">' +
+    SPK.map((p, n) => `<button class="act" data-act="rs" data-cid="${cid}" data-n="${n}" style="color:${spkCol(p.name)}">${esc(p.name)}</button>`).join('') +
+    `<input placeholder="новое имя"><button class="act" data-act="rsnew" data-cid="${cid}">OK</button></div>`;
+}
+
+function seekPlay(t){
+  const a = $('trAudio');
+  const go = () => { a.currentTime = t; a.play().catch(() => {}); };
+  if (a.readyState >= 1) go();
+  else a.addEventListener('loadedmetadata', go, {once: true});
+}
+
+async function listenSegment(rid, t){
+  showTab('tr');
+  await initTr();
+  const sel = $('recSel');
+  if (sel.value !== String(rid)){ sel.value = String(rid); await loadSegments(); }
+  else if ($('trWrap').style.display === 'none') await loadSegments();
+  seekPlay(t);
+}
+
+async function resolveConflict(cid, name){
+  await api('/api/conflicts/' + cid + '/resolve', {method: 'POST', body: {name}});
+  if (TAB === 'tr') loadSegments().catch(() => {});
+  if (TAB === 'sp') loadSp().catch(() => {});
+  loadJobs().catch(() => {});
+}
+
+// ---------- Диск ----------
+async function loadDisk(){
+  const d = await api('/api/disk');
+  $('diskCards').innerHTML =
+    Object.entries(d.folders).map(([k, v]) =>
+      `<div class="card"><div class="dim">${esc(k)}</div><div class="v">${Number(v).toFixed(1)} МБ</div></div>`).join('') +
+    `<div class="card"><div class="dim">БД</div><div class="v">${Number(d.db_mb).toFixed(1)} МБ</div></div>` +
+    `<div class="card" style="border-color:var(--acc)"><div class="dim">всего</div><div class="v">${Number(d.total_mb).toFixed(1)} МБ</div></div>`;
+  $('diskTop').innerHTML = d.top_files.map(f =>
+    `<tr><td class="mono">${Number(f.mb).toFixed(1)}</td><td style="word-break:break-all" class="dim">${esc(f.path)}</td></tr>`).join('') ||
+    '<tr><td colspan="2" class="dim">пусто</td></tr>';
+}
+
+// ---------- Спикеры ----------
+async function loadSp(){
+  const [spk, confs] = await Promise.all([api('/api/speakers'), api('/api/conflicts?status=open')]);
+  SPK = spk;
+  $('spkList').innerHTML = spk.map(spCard).join('') || '<div class="dim">спикеров нет</div>';
+  $('confList').innerHTML = confs.map(confCard).join('') || '<div class="dim">открытых конфликтов нет</div>';
+}
+
+function spCard(p){
+  const counts = Object.entries(p.sample_counts || {}).map(([k, v]) => `${esc(k)}: ${v}`).join(' · ') || 'нет сэмплов';
+  const btns = (p.samples || []).filter(s => s.has_path).map(s =>
+    `<button class="act" data-act="smp" data-sid="${s.id}">▶ ${esc(s.kind)}${s.duration_sec ? ' ' + (+s.duration_sec).toFixed(1) + 'с' : ''}</button>`).join('');
+  return `<div class="card" style="min-width:260px">
+    <div><b style="color:${spkCol(p.name)}">${esc(p.name)}</b></div>
+    ${p.aliases && p.aliases.length ? `<div class="dim">${esc(p.aliases.join(', '))}</div>` : ''}
+    <div class="dim">${counts}</div>
+    <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">${btns}</div>
+  </div>`;
+}
+
+function confCard(c){
+  const d = c.detail || {};
+  const top = Array.isArray(d.top) ? d.top.map(t => `${esc(t.name)} ${(+t.cos).toFixed(2)}`).join(' · ') : '';
+  return `<div class="card" style="width:100%">
+    <div class="dim">#${c.id} · ${esc(c.reason)} · запись #${c.recording_id} · ${fmtT(c.start_sec)}–${fmtT(c.end_sec)} ·
+      <span style="color:${spkCol(c.speaker_name)}">${esc(c.speaker_name)}</span>${c.confidence != null ? ' · ' + (+c.confidence).toFixed(2) : ''}</div>
+    <div style="margin:6px 0">«${esc(c.text)}»</div>
+    ${top ? `<div class="dim">top: ${top}${d.cluster_default ? ' · cluster: ' + esc(d.cluster_default.name) : ''}</div>` : ''}
+    <div class="rsrow">
+      <button class="act" data-act="listen" data-rid="${c.recording_id}" data-t="${+c.start_sec}">▶ слушать</button>
+      ${SPK.map((p, n) => `<button class="act" data-act="rs" data-cid="${c.id}" data-n="${n}" style="color:${spkCol(p.name)}">${esc(p.name)}</button>`).join('')}
+      <input placeholder="новое имя"><button class="act" data-act="rsnew" data-cid="${c.id}">OK</button>
+    </div>
+  </div>`;
+}
+
+// ---------- события ----------
+document.addEventListener('click', async e => {
+  const nb = e.target.closest('nav button');
+  if (nb){ showTab(nb.dataset.tab); return; }
+  const b = e.target.closest('[data-act]');
+  if (b){
+    try {
+      const a = b.dataset.act;
+      if (a === 'row') toggleRec(+b.dataset.rid);
+      else if (a === 'tog'){ const p = $('pan' + b.dataset.i); if (p) p.style.display = p.style.display === 'none' ? '' : 'none'; }
+      else if (a === 'rs') await resolveConflict(+b.dataset.cid, SPK[+b.dataset.n].name);
+      else if (a === 'rsnew'){
+        const inp = b.parentElement.querySelector('input');
+        const v = (inp && inp.value || '').trim();
+        if (v) await resolveConflict(+b.dataset.cid, v);
+      }
+      else if (a === 'smp'){ const au = $('spAudio'); au.src = '/api/speakers/sample/' + b.dataset.sid; au.play().catch(() => {}); }
+      else if (a === 'listen') await listenSegment(+b.dataset.rid, +b.dataset.t);
+      else if (a === 'rep'){
+        if (confirm('Переиграть запись #' + b.dataset.rid + ' с этапа ' + b.dataset.stage + '?')){
+          await api('/api/recordings/' + b.dataset.rid + '/reprocess', {method: 'POST', body: {from_stage: b.dataset.stage}});
+          await loadJobs();
+        }
+      }
+    } catch (err) {}
+    return;
+  }
+  const sg = e.target.closest('.seg');
+  if (sg && sg.dataset.t !== undefined) seekPlay(+sg.dataset.t);
+});
+
+$('recSel').addEventListener('change', () => loadSegments().catch(() => {}));
+
+setInterval(() => { if (TAB === 'jobs') loadJobs().catch(() => {}); }, 5000);
+loadJobs().catch(() => {});
+</script>
+</body>
+</html>
