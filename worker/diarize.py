@@ -27,6 +27,7 @@ class Utterance:
     words: list = field(default_factory=list)
     asr_logprob: float | None = None
     vec: np.ndarray | None = None
+    cluster: int = -1           # наш кластер голоса (не метка провайдера)
     speaker: str = "S?"
     confidence: float | None = None
     inherited: bool = False
@@ -114,6 +115,80 @@ def split_mixed(u: Utterance, cache, depth: int = 0) -> list[Utterance]:
     return split_mixed(left_u, cache, depth + 1) + split_mixed(right_u, cache, depth + 1)
 
 
+def _merge_closest(cents: list[np.ndarray], groups: list[list[int]], join: float) -> None:
+    """Агломеративная склейка по среднему направлению, пока ближайшая пара выше порога."""
+    while len(groups) > 1:
+        C = np.array(cents)
+        M = C @ C.T
+        np.fill_diagonal(M, -1.0)
+        i, j = np.unravel_index(int(M.argmax()), M.shape)
+        if M[i, j] < join:
+            break
+        groups[i] += groups[j]
+        m = np.mean([cents[i], cents[j]], axis=0)
+        cents[i] = m / (np.linalg.norm(m) or 1.0)
+        groups.pop(j)
+        cents.pop(j)
+
+
+def _cluster_utterances(utts: list[Utterance]) -> list[dict]:
+    """Кто есть кто — решаем по голосу самих реплик, а не по меткам провайдера.
+
+    Метка Scribe (speaker_0/1) — его гипотеза, и она бывает смешанной: на записи #19
+    в одну метку попали два человека, центроид получился химерой (0.85 к одному и
+    0.65 к другому), и оба получали чужое имя. Голоса же разделяются чисто: те же
+    реплики, собранные в кластеры по звучанию, дают 0.91 при отрыве 0.33.
+
+    Порог здесь НАМНОГО ниже, чем при склейке меток: усреднение по метке поднимает
+    косинус, а у одиночных реплик того же человека он около 0.5. Поэтому опорой
+    берём только длинные реплики, а коротышей приписываем к готовым кластерам.
+    """
+    anchors = [i for i, u in enumerate(utts)
+               if u.vec is not None and u.end - u.start >= config.ANCHOR_MIN_SEC]
+    if not anchors:
+        return []
+    groups = [[i] for i in anchors]
+    cents = [utts[i].vec.copy() for i in anchors]
+    _merge_closest(cents, groups, config.UTTER_JOIN)
+
+    sec = lambda g: sum(utts[i].end - utts[i].start for i in g)
+    # Кластер из пары случайных реплик — чаще шум, чем человек. Такие распускаем:
+    # их реплики пойдут общим порядком, приписыванием к устоявшимся кластерам.
+    keep = [k for k in sorted(range(len(groups)), key=lambda k: -sec(groups[k]))
+            if sec(groups[k]) >= config.CLUSTER_MIN_SEC]
+    if not keep:                        # короткая запись — оставляем самый крупный
+        keep = [max(range(len(groups)), key=lambda k: sec(groups[k]))]
+
+    out = [{"members": list(groups[k]), "cent": cents[k], "spoke": sec(groups[k]),
+            "first": min(utts[i].start for i in groups[k])} for k in keep]
+    out.sort(key=lambda c: c["first"])   # порядок появления в разговоре
+    taken = {i for c in out for i in c["members"]}
+
+    # Остальные реплики (короткие, распущенные) — к ближайшему по голосу кластеру.
+    # Без вектора судить не по чему: тогда опираемся на метку провайдера, внутри
+    # неё голос обычно один — это ровно та подсказка, ради которой она и нужна.
+    by_label: dict[str, list[int]] = {}
+    for ci, c in enumerate(out):
+        for i in c["members"]:
+            by_label.setdefault(utts[i].raw_speaker, []).append(ci)
+    for i, u in enumerate(utts):
+        if i in taken:
+            continue
+        if u.vec is not None:
+            ci = max(range(len(out)), key=lambda k: float(out[k]["cent"] @ u.vec))
+        elif by_label.get(u.raw_speaker):
+            hits = by_label[u.raw_speaker]
+            ci = max(set(hits), key=hits.count)
+        else:
+            continue
+        out[ci]["members"].append(i)     # центроид НЕ трогаем: вектор коротыша шумный
+        out[ci]["spoke"] += u.end - u.start
+    for ci, c in enumerate(out):
+        for i in c["members"]:
+            utts[i].cluster = ci
+    return out
+
+
 def assign_speakers(utts: list[Utterance], src: Path, base: dict[str, np.ndarray]) -> dict:
     """Эмбеддинги -> кластеры -> имена. Возвращает сводку кластеров для артефакта."""
     # 0) чиним склейки провайдера: длинные реплики, внутри которых сменился голос
@@ -136,86 +211,34 @@ def assign_speakers(utts: list[Utterance], src: Path, base: dict[str, np.ndarray
         except Exception:
             u.vec = None
 
-    # 2) кластеризация raw_speaker-меток (они локальны для куска) по центроидам
-    by_label: dict[str, list[np.ndarray]] = {}
-    spoke: dict[str, float] = {}
-    first: dict[str, float] = {}
-    for u in utts:
-        spoke[u.raw_speaker] = spoke.get(u.raw_speaker, 0.0) + (u.end - u.start)
-        first.setdefault(u.raw_speaker, u.start)
-        if u.vec is not None:
-            by_label.setdefault(u.raw_speaker, []).append(u.vec)
-
-    label_vec: dict[str, np.ndarray] = {}
-    for lab, vecs in by_label.items():
-        m = np.mean(vecs, axis=0)
-        n = np.linalg.norm(m)
-        label_vec[lab] = m / n if n else m
-
-    # Фаза 1: кластеризуем только метки с надёжным вектором (говорили достаточно долго).
-    # Короткие обрывки — особенно осколки от сплиттера — имеют шумный вектор и, попадая
-    # в общую кластеризацию, плодят микрокластеры по 4-10 секунд вместо реальных людей.
-    solid = [l for l in label_vec if spoke.get(l, 0) >= config.CLUSTER_MIN_SEC]
-    weak = [l for l in label_vec if l not in solid]
-    clusters: list[dict] = []
-    for lab in sorted(solid, key=lambda l: -spoke.get(l, 0)):
-        v = label_vec[lab]
-        best_i, best_cos = -1, 0.0
-        for i, c in enumerate(clusters):
-            cen = c["sum"] / np.linalg.norm(c["sum"])
-            cos = float(cen @ v)
-            if cos > best_cos:
-                best_i, best_cos = i, cos
-        if best_i >= 0 and best_cos >= config.CLUSTER_JOIN:
-            c = clusters[best_i]
-            c["labels"].append(lab)
-            c["sum"] = c["sum"] + v
-            c["spoke"] += spoke.get(lab, 0.0)
-            c["first"] = min(c["first"], first.get(lab, 0.0))
-        else:
-            clusters.append({"labels": [lab], "sum": v.copy(),
-                             "spoke": spoke.get(lab, 0.0), "first": first.get(lab, 0.0)})
-
-    # Фаза 2: короткие метки приписываем к ближайшему сформированному кластеру
-    # (без порога — просто ближайший); низкая уверенность отметится на уровне реплик.
-    for lab in sorted(weak, key=lambda l: -spoke.get(l, 0)):
-        v = label_vec[lab]
-        if not clusters:
-            clusters.append({"labels": [lab], "sum": v.copy(),
-                             "spoke": spoke.get(lab, 0.0), "first": first.get(lab, 0.0)})
-            continue
-        best_i = max(range(len(clusters)),
-                     key=lambda i: float((clusters[i]["sum"] / np.linalg.norm(clusters[i]["sum"])) @ v))
-        c = clusters[best_i]
-        c["labels"].append(lab)
-        c["spoke"] += spoke.get(lab, 0.0)     # вектор кластера НЕ обновляем шумным обрывком
-        c["first"] = min(c["first"], first.get(lab, 0.0))
+    # 2) кластеризация РЕПЛИК по голосу (метки провайдера — только подсказка)
+    clusters = _cluster_utterances(utts)
 
     # 3) имя кластеру: матч центроида против базы голосов
-    label_to_name: dict[str, str] = {}
+    names: list[str] = []
     cluster_ref: dict[str, np.ndarray] = {}
     summary = []
     anon = 0
-    for c in sorted(clusters, key=lambda c: c["first"]):
-        cen = c["sum"] / np.linalg.norm(c["sum"])
+    for c in clusters:
+        cen = c["cent"]
         ranked = sorted(((n, float(v @ cen)) for n, v in base.items()), key=lambda kv: -kv[1])
         if ranked and ranked[0][1] >= config.CONF_OK:
             name, score = ranked[0]
         else:
             anon += 1
             name, score = f"S{anon}", (ranked[0][1] if ranked else 0.0)
-        for lab in c["labels"]:
-            label_to_name[lab] = name
+        names.append(name)
         cluster_ref[name] = cen
         summary.append({"name": name, "spoke_sec": round(c["spoke"]),
-                        "labels": c["labels"], "base_cos": round(score, 3),
+                        "utterances": len(c["members"]), "base_cos": round(score, 3),
+                        "labels": sorted({utts[i].raw_speaker for i in c["members"]})[:8],
                         "candidates": [{"name": n, "cos": round(s, 3)} for n, s in ranked[:3]]})
 
     # 4) per-реплика: confidence + разворот только у спорных
     ref = dict(base)
     ref.update({k: v for k, v in cluster_ref.items() if k.startswith("S")})
     for u in utts:
-        cluster_name = label_to_name.get(u.raw_speaker, "S?")
+        cluster_name = names[u.cluster] if 0 <= u.cluster < len(names) else "S?"
         if u.vec is None:
             u.speaker, u.confidence, u.inherited = cluster_name, None, True
             continue
@@ -247,7 +270,7 @@ def assign_speakers(utts: list[Utterance], src: Path, base: dict[str, np.ndarray
                                    "top2_close" if margin < config.TOP2_MARGIN else "low_confidence")}
         if reassigned:
             u.detail = dict(u.detail or {}, reassigned=reassigned, top=top)
-    return {"clusters": summary, "labels": label_to_name, "splits": split_count}
+    return {"clusters": summary, "splits": split_count}
 
 
 JUDGE_PROMPT = """Диалог, транскрипт с автоматически определёнными спикерами. У одной реплики
