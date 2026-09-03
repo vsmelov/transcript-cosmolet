@@ -222,16 +222,31 @@ def assign_speakers(utts: list[Utterance], src: Path, base: dict[str, np.ndarray
         ranked = sorted(((n, float(v @ u.vec)) for n, v in ref.items()), key=lambda kv: -kv[1])
         top = [{"name": n, "cos": round(s, 3)} for n, s in ranked[:3]]
         cl_cos = next((s for n, s in ranked if n == cluster_name), 0.0)
-        u.speaker = cluster_name
-        u.confidence = round(cl_cos, 3)
         margin = (ranked[0][1] - ranked[1][1]) if len(ranked) > 1 else 1.0
         mismatch = bool(ranked) and ranked[0][0] != cluster_name
+
+        # Провайдер иногда сваливает чужую реплику в чужую метку целиком (перехват,
+        # шутка чужим голосом). Если голос реплики уверенно ближе к ДРУГОМУ человеку,
+        # чем к дефолту её кластера — переназначаем реплику, а не тащим её за меткой.
+        reassigned = None
+        if (mismatch and ranked[0][1] >= config.REASSIGN_MIN_COS
+                and ranked[0][1] - cl_cos >= config.REASSIGN_MIN_GAP):
+            reassigned = {"from": cluster_name, "to": ranked[0][0],
+                          "cos": round(ranked[0][1], 3), "cluster_cos": round(cl_cos, 3)}
+            cluster_name = ranked[0][0]
+            cl_cos = ranked[0][1]
+            mismatch = False
+
+        u.speaker = cluster_name
+        u.confidence = round(cl_cos, 3)
         if cl_cos < config.CONF_OK or margin < config.TOP2_MARGIN or mismatch:
             u.ambiguous = True
             u.detail = {"top": top,
                         "cluster_default": {"name": cluster_name, "cos": round(cl_cos, 3)},
                         "reason": ("cluster_mismatch" if mismatch else
                                    "top2_close" if margin < config.TOP2_MARGIN else "low_confidence")}
+        if reassigned:
+            u.detail = dict(u.detail or {}, reassigned=reassigned, top=top)
     return {"clusters": summary, "labels": label_to_name, "splits": split_count}
 
 

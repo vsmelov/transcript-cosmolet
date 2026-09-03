@@ -13,11 +13,18 @@ _client = httpx.Client(timeout=600, trust_env=False)
 
 
 def draft_transcribe(path: Path) -> tuple[dict, float]:
-    """Черновик через OpenRouter whisper-turbo, verbose_json. Возвращает (ответ, цена $)."""
+    """Черновик через OpenRouter whisper-turbo, verbose_json. Возвращает (ответ, цена $).
+
+    language обязателен: без него whisper на русской речи скатывается в ПЕРЕВОД на
+    английский и сыпет галлюцинациями «thank you» на паузах (проверено на реальной записи).
+    """
+    data = {"model": config.DRAFT_MODEL, "response_format": "verbose_json"}
+    if config.DRAFT_LANGUAGE:
+        data["language"] = config.DRAFT_LANGUAGE
     r = _client.post(
         "https://openrouter.ai/api/v1/audio/transcriptions",
         headers={"Authorization": f"Bearer {config.OPENROUTER_API_KEY}"},
-        data={"model": config.DRAFT_MODEL, "response_format": "verbose_json"},
+        data=data,
         files={"file": (path.name, path.read_bytes())},
     )
     r.raise_for_status()

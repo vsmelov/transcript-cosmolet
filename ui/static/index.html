@@ -15,7 +15,8 @@ nav{display:flex;gap:4px}
 nav button{background:none;border:1px solid transparent;color:var(--dim);padding:6px 12px;border-radius:6px;cursor:pointer;font:inherit}
 nav button.on{color:var(--text);background:var(--panel);border-color:var(--border)}
 #err{color:var(--red);font-size:12px;margin-left:auto}
-#costBadge{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--green);font-variant-numeric:tabular-nums;white-space:nowrap}
+#costBadge{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--green);font-variant-numeric:tabular-nums;white-space:nowrap;cursor:pointer}
+#costBadge:hover{border-color:var(--acc)}
 main{padding:16px;max-width:1200px;margin:0 auto}
 table{width:100%;border-collapse:collapse}
 th{text-align:left;color:var(--dim);font-weight:500;font-size:12px;padding:6px 8px;border-bottom:1px solid var(--border)}
@@ -26,6 +27,7 @@ tr[data-act]:hover td{background:var(--panel)}
 .st-new{color:var(--acc)}.st-processing,.st-running{color:var(--yellow)}.st-done{color:var(--green)}.st-failed{color:var(--red)}.st-pending,.st-skipped{color:var(--dim)}
 button.act{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:3px 10px;cursor:pointer;font:inherit;font-size:12px}
 button.act:hover{border-color:var(--acc)}
+button.act.playing{border-color:var(--acc);background:rgba(122,162,247,.18);color:var(--acc)}
 button.lnk{background:none;border:none;color:var(--dim);cursor:pointer;font:inherit;font-size:12px;padding:0 4px;flex:none}
 button.lnk:hover{color:var(--acc)}
 button.lnk.ok{color:var(--green)}
@@ -48,6 +50,7 @@ a{color:var(--acc)}
 .seg.amb{border-color:var(--red)}
 .seg .t,.frag .t{color:var(--dim);font-variant-numeric:tabular-nums;flex:none}
 .frag{display:flex;gap:10px;align-items:baseline;padding:3px 0}
+.frag.amb{opacity:.62;border-left:2px solid var(--red);padding-left:6px}
 .spk{font-weight:600;flex:none}
 .badge{font-size:11px;border:1px solid var(--border);border-radius:8px;padding:0 6px;color:var(--dim);flex:none;white-space:nowrap}
 .badge.bad{color:var(--red);border-color:var(--red)}
@@ -64,6 +67,21 @@ tr.hl td{background:var(--hl);box-shadow:inset 0 1px 0 var(--acc),inset 0 -1px 0
 .pitem{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px;cursor:pointer}
 .pitem:hover,.pitem.on{border-color:var(--acc)}
 .off{opacity:.45}
+/* список записей на вкладке «Транскрипт» */
+.rec{display:flex;gap:16px;justify-content:space-between;align-items:flex-start;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;cursor:pointer}
+.rec:hover{border-color:var(--acc)}
+.rec .main{min-width:0;flex:1}
+.rec .meta{flex:none;text-align:right}
+.rtitle{font-size:15px;font-weight:600;overflow-wrap:anywhere}
+.rdate{font-size:15px;color:var(--text)}
+.spks{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.spkb{color:var(--dim)}
+.trhead{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin:8px 0}
+/* Usage */
+.bar{height:7px;background:var(--panel2);border:1px solid var(--border);border-radius:5px;margin:8px 0 4px;overflow:hidden}
+.bar>i{display:block;height:100%;background:var(--green)}
+.card.wide{width:100%}
+svg text{font-family:inherit}
 </style>
 </head>
 <body>
@@ -75,9 +93,10 @@ tr.hl td{background:var(--hl);box-shadow:inset 0 1px 0 var(--acc),inset 0 -1px 0
     <button data-tab="voices">Голоса</button>
     <button data-tab="disk">Диск</button>
     <button data-tab="sp">Спикеры</button>
+    <button data-tab="usage">Usage</button>
   </nav>
   <span id="err"></span>
-  <span id="costBadge">…</span>
+  <span id="costBadge" data-act="goto" data-h="usage" title="куда уходят деньги →">…</span>
 </header>
 <main>
   <section id="tab-jobs" class="tab">
@@ -88,8 +107,12 @@ tr.hl td{background:var(--hl);box-shadow:inset 0 1px 0 var(--acc),inset 0 -1px 0
   </section>
 
   <section id="tab-tr" class="tab" style="display:none">
-    <select id="recSel"><option value="">— запись —</option></select>
+    <div id="trList"><div class="dim">загрузка…</div></div>
     <div id="trWrap" style="display:none">
+      <div class="rsrow" style="margin-top:0">
+        <button class="act" data-act="goto" data-h="transcript">← к списку</button>
+      </div>
+      <div id="trHead"></div>
       <audio id="trAudio" controls preload="metadata"></audio>
       <div id="playHint" style="display:none;margin:6px 0">
         <button class="act" data-act="playat">▶ играть с <span id="playHintT"></span></button>
@@ -139,6 +162,10 @@ tr.hl td{background:var(--hl);box-shadow:inset 0 1px 0 var(--acc),inset 0 -1px 0
     <div id="confNote" class="dim" style="font-size:12px"></div>
     <div class="cards" id="confList"></div>
   </section>
+
+  <section id="tab-usage" class="tab" style="display:none">
+    <div id="usageBody"><div class="dim">загрузка…</div></div>
+  </section>
 </main>
 
 <script>
@@ -146,13 +173,18 @@ tr.hl td{background:var(--hl);box-shadow:inset 0 1px 0 var(--acc),inset 0 -1px 0
 const $ = id => document.getElementById(id);
 let TAB = 'jobs', RECS = [], SEGS = [], SPK = [], CONF_BY_SEG = {}, OPEN = null, CUR_RID = null, PEND_T = null;
 let VSEC = 'people', VPEOPLE = [], VPERSON = null, ERID = null, ECAND = null, VSTOP = null;
+let RSUM = null;   // /api/recordings/summary — список записей со спикерами
 
 // ---------- утилиты ----------
 const esc = s => (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtT = s => { s = Math.max(0, Math.floor(+s || 0)); return [s/3600|0, (s/60|0)%60, s%60].map(n => String(n).padStart(2,'0')).join(':'); };
-const fmtUsd = v => '$' + (+v || 0).toFixed(4);
+// мелкие суммы — 4 знака (иначе всё выглядит как $0.00), от доллара — обычные 2
+const fmtUsd = v => { const n = +v || 0; return '$' + n.toFixed(Math.abs(n) >= 1 ? 2 : 4); };
+const fmtMin = s => { const v = +s || 0; return v < 60 ? v.toFixed(0) + ' с' : (v/60).toFixed(1) + ' мин'; };
+const fmtHrs = h => h == null ? '—' : (+h).toFixed(h >= 10 ? 0 : 1) + ' ч';
 const fmtBytes = b => b == null ? '—' : (b >= 1073741824 ? (b/1073741824).toFixed(2)+' ГБ' : (b/1048576).toFixed(1)+' МБ');
 const fmtDT = s => s ? new Date(s).toLocaleString('ru-RU', {hour12:false}) : '—';
+const fmtDay = s => s ? String(s).slice(0, 10) : '—';
 const hue = n => { let h = 0; for (const c of String(n || '')) h = (h*31 + c.charCodeAt(0)) >>> 0; return h % 360; };
 const spkCol = n => `hsl(${hue(n)},60%,70%)`;
 const linkBtn = h => `<button class="lnk" data-act="link" data-h="${esc(h)}" title="скопировать ссылку">🔗</button>`;
@@ -206,7 +238,7 @@ async function copyLink(hash, btn){
 }
 
 // ---------- роутер ----------
-const TAB_HASH = {jobs:'jobs', tr:'transcript', voices:'voices', disk:'disk', sp:'speakers'};
+const TAB_HASH = {jobs:'jobs', tr:'transcript', voices:'voices', disk:'disk', sp:'speakers', usage:'usage'};
 let LAST_HASH = null, ROUTING = false, NEXT = null;
 
 const curHash = () => location.hash.replace(/^#/, '');
@@ -247,6 +279,7 @@ function parseHash(h){
     return {tab:'sp', toConf:true, confId: /^\d+$/.test(p[1] || '') ? +p[1] : null};
   if (p[0] === 'speakers') return {tab:'sp'};
   if (p[0] === 'disk') return {tab:'disk'};
+  if (p[0] === 'usage') return {tab:'usage'};
   return {tab:'jobs', bad:true};
 }
 
@@ -289,6 +322,8 @@ async function showTab(r, hl){
     await showVoices(r);
   } else if (TAB === 'disk'){
     await loadDisk();
+  } else if (TAB === 'usage'){
+    await loadUsage();
   } else if (TAB === 'sp'){
     await loadSp();
     if (r.confId != null){
@@ -378,47 +413,93 @@ function stageCard(j){
   </div>`;
 }
 
-// ---------- Транскрипт ----------
-async function initTr(){
-  if (!RECS.length) RECS = await api('/api/recordings');
-  const sel = $('recSel'), cur = sel.value;
-  sel.innerHTML = '<option value="">— запись —</option>' +
-    RECS.map(r => `<option value="${r.id}">#${r.id} · ${esc(recTitle(r))} (${esc(r.status)})</option>`).join('');
-  if (cur) sel.value = cur;
+// ---------- Транскрипт: список записей ----------
+// бейдж спикера: имя + сколько он говорил, цвет — тот же, что в ленте сегментов
+function spkBadges(list, max){
+  const all = list || [];
+  const head = max ? all.slice(0, max) : all;
+  const rest = all.length - head.length;
+  if (!all.length) return '<span class="sub">спикеры не размечены</span>';
+  return head.map(s => `<span class="badge spkb" style="color:${spkCol(s.name)};border-color:${spkCol(s.name)}"
+      title="${esc(s.name)}: ${s.segments} реплик">${esc(s.name)} · ${fmtMin(s.sec)}</span>`).join('') +
+    (rest > 0 ? `<span class="badge">ещё ${rest}</span>` : '');
+}
+
+async function loadTrList(force){
+  const el = $('trList');
+  if (!RSUM || force){
+    if (!RSUM) el.innerHTML = '<div class="dim">загрузка…</div>';
+    try { RSUM = await api('/api/recordings/summary'); } catch (e) { fail(el, e); return; }
+  }
+  el.innerHTML = RSUM.length ? RSUM.map(recRow).join('')
+    : '<div class="dim">записей нет — положите файл в data/inbox</div>';
+}
+
+function recRow(r){
+  return `<div class="rec" data-act="trgo" data-rid="${r.id}">
+    <div class="main">
+      <div class="rtitle">${esc(recTitle(r))}</div>
+      <div class="sub">#${r.id}${r.title && r.title !== r.filename ? ' · ' + esc(r.filename) : ''}</div>
+      <div class="spks">${spkBadges(r.speakers, 8)}</div>
+    </div>
+    <div class="meta">
+      <div class="rdate mono">${fmtDT(r.started_at || r.created_at)}</div>
+      <div class="sub mono">${fmtT(r.duration_sec)} · ${r.segments} сегм.${
+        r.ambiguous ? ' · <span class="errtxt">спорных ' + r.ambiguous + '</span>' : ''}</div>
+      <div style="margin-top:4px"><span class="st st-${esc(r.status)}">${esc(r.status)}</span>${linkBtn('transcript/' + r.id)}</div>
+    </div>
+  </div>`;
+}
+
+function trHead(r){
+  if (!r) return '<span class="errtxt">записи нет в списке — возможно, её удалили</span>';
+  return `<div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+      <b style="font-size:16px">${esc(recTitle(r))}</b>
+      <span class="dim mono">${fmtDT(r.started_at || r.created_at)}</span>
+      <span class="dim mono">${fmtT(r.duration_sec)} · ${r.segments} сегм.</span>
+      ${r.ambiguous ? `<span class="badge bad">спорных ${r.ambiguous}</span>` : ''}
+      ${linkBtn('transcript/' + r.id)}
+    </div>
+    <div class="sub">${esc(r.filename)}</div>
+    <div class="spks">${spkBadges(r.speakers)}</div>`;
 }
 
 async function applyTr(r){
-  try { await initTr(); } catch (e) { fail($('segList'), e); $('trWrap').style.display = ''; return; }
-  const sel = $('recSel');
-  let rid = (r && r.rid != null) ? r.rid : (sel.value ? +sel.value : null);
-  if (rid != null && !RECS.some(x => x.id === rid)) rid = null;     // битый id в хэше
-  if (rid == null && RECS.length) rid = RECS[0].id;                 // самая свежая (список DESC)
-  if (rid == null){
-    $('trWrap').style.display = '';
-    $('segList').innerHTML = '<div class="dim">записей нет</div>';
+  const rid = (r && r.rid != null) ? r.rid : null;
+  if (rid == null){                       // #transcript без id — список записей
+    $('trWrap').style.display = 'none';
+    $('trList').style.display = '';
+    CUR_RID = null; showHint(null);
+    try { $('trAudio').pause(); } catch (e) {}
+    await loadTrList();
     return;
   }
-  sel.value = String(rid);
-  if (CUR_RID !== rid) await loadSegments();
+  $('trList').style.display = 'none';
+  $('trWrap').style.display = '';
+  if (CUR_RID !== rid) await loadSegments(rid);
+  if (CUR_RID !== rid) return;            // не загрузилось — сообщение уже показано
   if (r && (r.segId != null || r.sec != null)) jumpTo(r);
-  else { $('playHint').style.display = 'none'; PEND_T = null; setHash('transcript/' + rid, false); }
+  else { showHint(null); setHash('transcript/' + rid, false); }
 }
 
-async function loadSegments(){
-  const rid = +$('recSel').value;
-  if (!rid){ $('trWrap').style.display = 'none'; CUR_RID = null; return; }
+async function loadSegments(rid){
+  rid = +rid;
+  if (!rid){ CUR_RID = null; return; }
   $('trWrap').style.display = '';
-  let segs, confs, spk;
+  $('segList').innerHTML = '<div class="dim">загрузка…</div>';
+  let segs, confs, spk, sum;
   try {
-    [segs, confs, spk] = await Promise.all([
+    [segs, confs, spk, sum] = await Promise.all([
       api('/api/recordings/' + rid + '/segments'),
       api('/api/conflicts?status=open'),
       api('/api/speakers'),
+      RSUM ? Promise.resolve(RSUM) : api('/api/recordings/summary'),
     ]);
   } catch (e) { fail($('segList'), e); return; }
-  SEGS = segs; SPK = spk; CUR_RID = rid;
+  SEGS = segs; SPK = spk; CUR_RID = rid; RSUM = sum;
   CONF_BY_SEG = {};
   confs.forEach(c => { CONF_BY_SEG[String(c.segment_id)] = c.id; });
+  $('trHead').innerHTML = trHead(RSUM.find(x => x.id === rid));
   const au = $('trAudio'), src = '/api/audio/' + rid;
   if (!au.src || !au.src.endsWith(src)) au.src = src;
   $('segList').innerHTML = SEGS.map(segHtml).join('') ||
@@ -499,16 +580,40 @@ function jumpTo(r){
 
 async function resolveConflict(cid, name){
   await api('/api/conflicts/' + cid + '/resolve', {method: 'POST', body: {name}});
-  if (TAB === 'tr' && CUR_RID != null){ const r = CUR_RID; CUR_RID = null; $('recSel').value = String(r); await loadSegments(); }
+  RSUM = null;   // изменилось число спорных сегментов — сводку перечитать
+  if (TAB === 'tr' && CUR_RID != null){ const r = CUR_RID; CUR_RID = null; await loadSegments(r); }
   if (TAB === 'sp') loadSp().catch(() => {});
   if (TAB === 'jobs') loadJobs().catch(() => {});
 }
 
 // ---------- Голоса: общий плеер ----------
-function playSpan(rid, start, end){
+// кнопка, с которой запущено воспроизведение: она показывает ⏸ и останавливает по клику
+let VBTN = null, VBTN_LABEL = '';
+let SPBTN = null, SPBTN_LABEL = '';   // то же для плеера сэмплов на вкладке «Спикеры»
+function markPlaying(btn){
+  releaseBtn();
+  if (!btn) return;
+  VBTN = btn; VBTN_LABEL = btn.innerHTML;
+  btn.innerHTML = btn.innerHTML.replace('▶', '⏸');
+  if (btn.innerHTML === VBTN_LABEL) btn.innerHTML = '⏸ ' + VBTN_LABEL;
+  btn.classList.add('playing');
+}
+function releaseBtn(){
+  if (VBTN){ VBTN.innerHTML = VBTN_LABEL; VBTN.classList.remove('playing'); }
+  VBTN = null; VBTN_LABEL = '';
+}
+function toggleIfSame(btn){
+  const a = $('vAudio');
+  if (VBTN === btn && !a.paused){ a.pause(); return true; }   // повторный клик = стоп
+  return false;
+}
+
+function playSpan(rid, start, end, btn){
+  if (toggleIfSame(btn)) return;
   const a = $('vAudio'), src = '/api/audio/' + rid;
   const fresh = !a.src || !a.src.endsWith(src);
   VSTOP = (end != null && +end > +start) ? +end : null;
+  markPlaying(btn);
   const go = () => { try { a.currentTime = +start; } catch (e) {} a.play().catch(() => {}); };
   if (!fresh && a.readyState >= 1){ go(); return; }
   if (fresh) a.src = src;
@@ -516,13 +621,41 @@ function playSpan(rid, start, end){
   a.addEventListener('loadedmetadata', go, {once: true});
   a.load();
 }
-function playSample(sid){
+function playSample(sid, btn){
+  if (toggleIfSame(btn)) return;
   const a = $('vAudio');
   VSTOP = null;
+  markPlaying(btn);
   a.src = '/api/speakers/sample/' + sid;
   a.load();
   a.play().catch(() => {});
 }
+// очередь фрагментов кластера: играем подряд, чтобы составить впечатление о голосе
+let VQUEUE = null;
+function playQueue(){
+  if (!VQUEUE || VQUEUE.idx >= VQUEUE.items.length){
+    if (VQUEUE && VQUEUE.btn){ VQUEUE.btn.innerHTML = VQUEUE.btn.innerHTML.replace('⏸', '▶'); VQUEUE.btn.classList.remove('playing'); }
+    VQUEUE = null; return;
+  }
+  const t = VQUEUE.items[VQUEUE.idx++];
+  const btn = VQUEUE.btn;
+  btn.innerHTML = `⏸ подряд ${VQUEUE.idx}/${VQUEUE.items.length}`;
+  btn.classList.add('playing');
+  const a = $('vAudio'), src = '/api/audio/' + VQUEUE.rid;
+  VSTOP = t.end_sec;
+  const go = () => { try { a.currentTime = t.start_sec; } catch (e) {} a.play().catch(() => {}); };
+  if (a.src && a.src.endsWith(src) && a.readyState >= 1) go();
+  else { a.src = src; a.addEventListener('loadedmetadata', go, {once: true}); a.load(); }
+}
+
+['pause', 'ended', 'emptied'].forEach(ev => $('vAudio').addEventListener(ev, () => {
+  if (VQUEUE){ setTimeout(playQueue, 150); return; }   // очередь: сразу следующий фрагмент
+  releaseBtn();
+}));
+['pause', 'ended', 'emptied'].forEach(ev => $('spAudio').addEventListener(ev, () => {
+  if (SPBTN){ SPBTN.innerHTML = SPBTN_LABEL; SPBTN.classList.remove('playing'); }
+  SPBTN = null; SPBTN_LABEL = '';
+}));
 $('vAudio').addEventListener('timeupdate', () => {
   const a = $('vAudio');
   if (VSTOP != null && a.currentTime >= VSTOP){ a.pause(); VSTOP = null; }
@@ -614,18 +747,22 @@ function renderCandidates(){
       <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
         <b style="color:${spkCol(g.label)};font-size:15px">${esc(g.label)}</b>
         ${g.known ? '<span class="badge">есть в базе</span>' : '<span class="badge bad">не опознан</span>'}
-        <span class="dim">говорил ${fmtT(g.total_sec)} · ${g.count} реплик</span>
+        <span class="dim">говорил ${fmtT(g.total_sec)} · ${g.count} реплик${
+          g.ambiguous_count ? ` · <span style="color:var(--red)">спорных ${g.ambiguous_count}</span>` : ''}</span>
+        <button class="act" data-act="vqueue" data-i="${i}">▶ подряд</button>
       </div>
       <div class="sub" style="margin-top:4px">${g.match.length
         ? 'матч по базе: ' + g.match.map(m => `${esc(m.name)} <b style="color:${cohCol(m.cos)}">${(+m.cos).toFixed(2)}</b>`).join(' · ')
         : esc(g.match_error || 'база эталонов пуста')}</div>
-      <div style="margin:8px 0">${g.top.map(t => `
-        <div class="frag">
+      <div style="margin:8px 0">${g.top.map((t, ti) => `
+        <div class="frag${t.ambiguous ? ' amb' : ''}"${ti >= 8 ? ' data-extra="1" style="display:none"' : ''}>
           <button class="act" data-act="vspan" data-rid="${d.recording_id}" data-s="${t.start_sec}" data-e="${t.end_sec}">▶</button>
           <span class="t">${fmtT(t.start_sec)}</span>
           <span class="badge">${(t.end_sec - t.start_sec).toFixed(1)}с</span>
+          ${t.ambiguous ? '<span class="badge bad" title="голос не похож на этот кластер — в эталон не пойдёт">спорный</span>' : ''}
           <span class="txt">${esc(t.text)}</span>
-        </div>`).join('') || '<span class="dim">фрагментов нет</span>'}</div>
+        </div>`).join('') || '<span class="dim">фрагментов нет</span>'}
+        ${g.top.length > 8 ? `<button class="act" data-act="vmore" data-i="${i}">показать все ${g.top.length}</button>` : ''}</div>
       <div class="rsrow">
         <select data-role="who"><option value="">— кто это? —</option>${optList()}</select>
         <button class="act" data-act="ewho">Это он / она</button>
@@ -641,7 +778,9 @@ function renderCandidates(){
 }
 
 async function enrollAct(card, kind){
-  const g = ECAND.groups[+card.dataset.i], res = card.querySelector('.eres'), best = g.top[0];
+  // в эталон идёт самый длинный НЕспорный фрагмент (его выбрал бэкенд), а не просто первый
+  const g = ECAND.groups[+card.dataset.i], res = card.querySelector('.eres'),
+        best = g.enroll_span || g.top.find(t => !t.ambiguous) || g.top[0];
   let name = '', mode = 'existing', aliases = [];
   if (kind === 'who'){
     name = card.querySelector('[data-role="who"]').value;
@@ -760,6 +899,98 @@ async function loadDisk(){
     '<tr><td colspan="2" class="dim">файлов нет</td></tr>';
 }
 
+// ---------- Usage ----------
+// столбики по дням: inline SVG, без библиотек; шкала — по максимуму дня или бюджету
+function usageChart(days, budget){
+  const W = 720, H = 170, L = 48, R = 10, T = 12, B = 26;
+  const n = Math.max(days.length, 1), bw = (W - L - R) / n;
+  const max = Math.max(budget > 0 ? budget : 0, ...days.map(d => +d.usd || 0), 0.01);
+  const y = v => T + (H - T - B) * (1 - v / max);
+  const bars = days.map((d, i) => {
+    const v = +d.usd || 0, top = y(v), h = Math.max(H - B - top, v > 0 ? 2 : 0);
+    const over = budget > 0 && v > budget;
+    return `<rect x="${(L + i*bw + 2).toFixed(1)}" y="${(H - B - h).toFixed(1)}"
+        width="${Math.max(bw - 4, 1).toFixed(1)}" height="${h.toFixed(1)}" rx="2"
+        fill="${v > 0 ? (over ? 'var(--red)' : 'var(--acc)') : 'var(--border)'}"
+        ><title>${esc(d.day)} — ${fmtUsd(v)} (${d.calls} вызовов)</title></rect>`;
+  }).join('');
+  const labels = days.map((d, i) => (i % 2 === 0 || i === days.length - 1)
+    ? `<text x="${(L + i*bw + bw/2).toFixed(1)}" y="${H - 8}" text-anchor="middle"
+         font-size="10" fill="var(--dim)">${esc(d.day.slice(8) + '.' + d.day.slice(5, 7))}</text>` : '').join('');
+  const bl = (budget > 0 && budget <= max)
+    ? `<line x1="${L}" y1="${y(budget).toFixed(1)}" x2="${W-R}" y2="${y(budget).toFixed(1)}"
+         stroke="var(--yellow)" stroke-dasharray="4 4"/>
+       <text x="${W-R}" y="${(y(budget) - 4).toFixed(1)}" text-anchor="end" font-size="10"
+         fill="var(--yellow)">бюджет ${fmtUsd(budget)}/день</text>` : '';
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block" role="img">
+    <line x1="${L}" y1="${T}" x2="${W-R}" y2="${T}" stroke="var(--border)" stroke-dasharray="2 4"/>
+    <line x1="${L}" y1="${H-B}" x2="${W-R}" y2="${H-B}" stroke="var(--border)"/>
+    <text x="${L-6}" y="${T+4}" text-anchor="end" font-size="10" fill="var(--dim)">${fmtUsd(max)}</text>
+    <text x="${L-6}" y="${H-B}" text-anchor="end" font-size="10" fill="var(--dim)">$0</text>
+    ${bl}${bars}${labels}</svg>`;
+}
+
+async function loadUsage(){
+  const el = $('usageBody');
+  let d;
+  try { d = await api('/api/usage'); } catch (e) { fail(el, e); return; }
+  const over = d.left_today_usd < 0;
+  const pct = d.budget_usd > 0 ? Math.min(100, Math.max(0, d.today_usd / d.budget_usd * 100)) : 0;
+
+  const cards = `<div class="cards">
+    <div class="card" style="min-width:250px">
+      <div class="dim">сегодня</div><div class="v">${fmtUsd(d.today_usd)}</div>
+      <div class="bar"><i style="width:${pct.toFixed(1)}%;background:${over ? 'var(--red)' : (pct > 75 ? 'var(--yellow)' : 'var(--green)')}"></i></div>
+      <div class="sub">бюджет ${fmtUsd(d.budget_usd)} · ${over
+        ? '<span class="errtxt">перерасход ' + fmtUsd(-d.left_today_usd) + '</span>'
+        : 'осталось ' + fmtUsd(d.left_today_usd)}</div>
+    </div>
+    <div class="card"><div class="dim">за 7 дней</div><div class="v">${fmtUsd(d.week_usd)}</div>
+      <div class="sub">≈ ${fmtUsd(d.week_usd / 7)} в день</div></div>
+    <div class="card"><div class="dim">за всё время</div><div class="v">${fmtUsd(d.total_usd)}</div>
+      <div class="sub">${d.calls} вызовов${d.first_day ? ' с ' + fmtDay(d.first_day) : ''}</div></div>
+  </div>`;
+
+  const mrows = d.by_model.map(m => `<tr>
+    <td style="word-break:break-all">${esc(m.model || '—')}</td>
+    <td><span class="badge">${esc(m.kind)}</span></td>
+    <td class="mono">${fmtUsd(m.usd)}</td>
+    <td class="mono">${m.calls}</td>
+    <td class="mono">${m.recordings}</td>
+    <td class="mono">${m.usd_per_audio_hour == null
+      ? '<span class="dim" title="нет знаменателя — длительностей или карты речи">—</span>'
+      : '<b>' + fmtUsd(m.usd_per_audio_hour) + '</b>'}</td>
+    <td class="sub">${m.basis === 'речь'
+      ? 'по речевым регионам · ' + fmtHrs(m.speech_hours)
+      : (m.basis === 'запись' ? 'по длительности записей · ' + fmtHrs(m.audio_hours) : '—')}</td>
+  </tr>`).join('');
+
+  const rrows = d.by_recording.map(r => `<tr data-act="goto" data-h="transcript/${r.id}">
+    <td class="mono">${r.id}</td>
+    <td>${esc(r.title)}</td>
+    <td class="mono">${fmtT(r.duration_sec)}</td>
+    <td class="mono">${fmtUsd(r.draft_usd)}</td>
+    <td class="mono">${fmtUsd(r.quality_usd)}</td>
+    <td class="mono">${fmtUsd(r.judge_usd)}</td>
+    <td class="mono"><b>${fmtUsd(r.total_usd)}</b></td>
+    <td class="mono">${r.usd_per_hour == null ? '<span class="dim">—</span>' : fmtUsd(r.usd_per_hour)}</td>
+  </tr>`).join('');
+
+  el.innerHTML = cards +
+    `<h3>По дням <span class="dim">— последние 14 дней</span></h3>
+     <div class="card wide">${usageChart(d.daily, d.budget_usd)}</div>
+     <h3>По моделям <span class="dim">— «$/час аудио»: черновик считается от длительности записи,
+       качество — от речевых регионов из карты черновика</span></h3>
+     <table><thead><tr><th>Модель</th><th>Этап</th><th>Сумма</th><th>Вызовов</th><th>Записей</th>
+       <th>$/час аудио</th><th>База</th></tr></thead>
+       <tbody>${mrows || '<tr><td colspan="7" class="dim">расходов ещё не было</td></tr>'}</tbody></table>
+     <h3>По записям</h3>
+     <table><thead><tr><th>ID</th><th>Запись</th><th>Длит.</th><th>draft</th><th>quality</th>
+       <th>judge</th><th>Итого</th><th>$/час записи</th></tr></thead>
+       <tbody>${rrows || '<tr><td colspan="8" class="dim">расходов по записям нет</td></tr>'}</tbody></table>`;
+  loadCosts().catch(() => {});
+}
+
 // ---------- Спикеры ----------
 async function loadSp(){
   let spk, confs;
@@ -819,6 +1050,7 @@ document.addEventListener('click', async e => {
       if (a === 'link') await copyLink(b.dataset.h, b);
       else if (a === 'goto') await go(b.dataset.h, true, true);
       else if (a === 'row') toggleRec(+b.dataset.rid);
+      else if (a === 'trgo') await go('transcript/' + b.dataset.rid, true);
       else if (a === 'tog'){ const p = $('pan' + b.dataset.i); if (p) p.style.display = p.style.display === 'none' ? '' : 'none'; }
       else if (a === 'rs') await resolveConflict(+b.dataset.cid, SPK[+b.dataset.n].name);
       else if (a === 'rsnew'){
@@ -826,11 +1058,29 @@ document.addEventListener('click', async e => {
         const v = (inp && inp.value || '').trim();
         if (v) await resolveConflict(+b.dataset.cid, v);
       }
-      else if (a === 'smp'){ const au = $('spAudio'); au.src = '/api/speakers/sample/' + b.dataset.sid; au.load(); au.play().catch(() => {}); }
+      else if (a === 'smp'){
+        const au = $('spAudio');
+        if (SPBTN === b && !au.paused){ au.pause(); return; }
+        if (SPBTN){ SPBTN.innerHTML = SPBTN_LABEL; SPBTN.classList.remove('playing'); }
+        SPBTN = b; SPBTN_LABEL = b.innerHTML;
+        b.innerHTML = b.innerHTML.replace('▶', '⏸'); b.classList.add('playing');
+        au.src = '/api/speakers/sample/' + b.dataset.sid; au.load(); au.play().catch(() => {});
+      }
       else if (a === 'playat'){ if (PEND_T != null) seekPlay(PEND_T); }
       else if (a === 'person') await openPerson(+b.dataset.id, true);
-      else if (a === 'vplay') playSample(b.dataset.sid);
-      else if (a === 'vspan') playSpan(b.dataset.rid, b.dataset.s, b.dataset.e);
+      else if (a === 'vplay') playSample(b.dataset.sid, b);
+      else if (a === 'vspan'){ VQUEUE = null; playSpan(b.dataset.rid, b.dataset.s, b.dataset.e, b); }
+      else if (a === 'vmore'){
+        b.closest('.ecard').querySelectorAll('[data-extra]').forEach(el => el.style.display = '');
+        b.remove();
+      }
+      else if (a === 'vqueue'){
+        const g = ECAND.groups[+b.dataset.i];
+        if (VQUEUE && VQUEUE.btn === b){ VQUEUE = null; $('vAudio').pause(); return; }
+        VQUEUE = {items: g.top.filter(t => !t.ambiguous).slice(0, 12), idx: 0,
+                  rid: ECAND.recording_id, btn: b};
+        playQueue();
+      }
       else if (a === 'vtog'){
         const res = await api('/api/speakers/sample/' + b.dataset.sid + '/toggle', {method:'POST'});
         if (VPERSON){
@@ -883,15 +1133,6 @@ document.addEventListener('click', async e => {
   }
 });
 
-$('recSel').addEventListener('change', async () => {
-  try {
-    CUR_RID = null;
-    await loadSegments();
-    showHint(null);
-    if (CUR_RID != null) setHash('transcript/' + CUR_RID, true);
-  } catch (e) {}
-});
-
 $('enrollSel').addEventListener('change', async () => {
   const v = +$('enrollSel').value;
   if (v){ setHash('voices/enroll/' + v, false); await loadCandidates(v); }
@@ -899,7 +1140,7 @@ $('enrollSel').addEventListener('change', async () => {
 
 setInterval(() => { if (TAB === 'jobs' && !ROUTING) loadJobs().catch(() => {}); }, 5000);
 
-function boot(){ LAST_HASH = curHash(); route(LAST_HASH, true).catch(() => {}); }
+function boot(){ LAST_HASH = curHash(); loadCosts().catch(() => {}); route(LAST_HASH, true).catch(() => {}); }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 </script>
 </body>

@@ -19,6 +19,11 @@ DB_URL = os.environ.get("DATABASE_URL", "postgresql://cosmolet:cosmolet@localhos
 DATA_FOLDERS = ["inbox", "in_progress", "done", "failed", "artifacts", "audio"]
 SPEAKERS_DIR = os.path.join(DATA_DIR, "speakers")
 
+try:  # тот же предохранитель, что у воркера — показываем его на вкладке Usage
+    DAILY_BUDGET_USD = float(os.environ.get("DAILY_BUDGET_USD", "2.0"))
+except ValueError:
+    DAILY_BUDGET_USD = 2.0
+
 # мягкое исключение сэмпла из эталона (можно вернуть) — колонки может не быть в старой БД
 MIGRATIONS = [
     "ALTER TABLE speaker_samples ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true",
@@ -161,6 +166,45 @@ def recordings():
                      FROM conflicts c JOIN segments s ON s.id = c.segment_id
                     WHERE c.status = 'open' GROUP BY s.recording_id) cf
                ON cf.recording_id = r.id
+        ORDER BY r.created_at DESC, r.id DESC""")
+
+
+@app.get("/api/recordings/summary")
+def recordings_summary():
+    """Список записей со сводкой для вкладки «Транскрипт».
+
+    Агрегаты по спикерам приходят одним запросом (json_agg по сгруппированным
+    сегментам), а не запросом на запись — список может быть длинным."""
+    return q("""
+        SELECT r.id, r.filename, r.title, r.status, r.duration_sec, r.size_bytes,
+               r.started_at, r.created_at,
+               coalesce(sg.n, 0)          AS segments,
+               coalesce(sg.amb, 0)        AS ambiguous,
+               coalesce(sg.speech_sec, 0) AS speech_sec,
+               coalesce(j.cost, 0)        AS cost_usd,
+               coalesce(cf.n, 0)          AS open_conflicts,
+               coalesce(sp.speakers, '[]'::json) AS speakers
+        FROM recordings r
+        LEFT JOIN (SELECT recording_id, count(*) AS n,
+                          count(*) FILTER (WHERE ambiguous) AS amb,
+                          sum(end_sec - start_sec) AS speech_sec
+                     FROM segments GROUP BY recording_id) sg
+               ON sg.recording_id = r.id
+        LEFT JOIN (SELECT recording_id, sum(cost_usd) AS cost FROM jobs GROUP BY recording_id) j
+               ON j.recording_id = r.id
+        LEFT JOIN (SELECT s.recording_id, count(*) AS n
+                     FROM conflicts c JOIN segments s ON s.id = c.segment_id
+                    WHERE c.status = 'open' GROUP BY s.recording_id) cf
+               ON cf.recording_id = r.id
+        LEFT JOIN (SELECT recording_id,
+                          json_agg(json_build_object('name', speaker_name, 'segments', n,
+                                                     'sec', round(sec::numeric, 1))
+                                   ORDER BY sec DESC) AS speakers
+                     FROM (SELECT recording_id, speaker_name, count(*) AS n,
+                                  sum(end_sec - start_sec) AS sec
+                             FROM segments GROUP BY 1, 2) t
+                    GROUP BY recording_id) sp
+               ON sp.recording_id = r.id
         ORDER BY r.created_at DESC, r.id DESC""")
 
 
@@ -351,7 +395,7 @@ ANON_RE = r"^(s|speaker)[_ -]?([0-9]+|\?)$"
 @app.get("/api/enroll/candidates")
 def enroll_candidates(recording_id: int):
     rec, src = rec_audio(recording_id)
-    segs = q("""SELECT id, start_sec, end_sec, text, confidence, speaker_name
+    segs = q("""SELECT id, start_sec, end_sec, text, confidence, speaker_name, ambiguous, detail
                 FROM segments WHERE recording_id = %s ORDER BY start_sec""", (recording_id,))
     names = {r["name"] for r in q("SELECT name FROM speakers")}
     refs = known_refs()
@@ -361,12 +405,17 @@ def enroll_candidates(recording_id: int):
     out = []
     for label, items in groups.items():
         items.sort(key=lambda x: (x["end_sec"] - x["start_sec"]), reverse=True)
-        top = [{k: s[k] for k in ("id", "start_sec", "end_sec", "text", "confidence")}
-               for s in items[:5]]
+        # показываем много фрагментов: по пяти обрывкам голос не опознать
+        top = [{k: s[k] for k in ("id", "start_sec", "end_sec", "text", "confidence", "ambiguous")}
+               for s in items[:25]]
+        # эталон и матч считаем по самому длинному НЕспорному фрагменту: спорный может
+        # оказаться чужой репликой, попавшей в кластер по ошибке провайдера
+        clean = [s for s in items if not s["ambiguous"]] or items
+        best = clean[0]
         match, err = [], None
-        if src and refs and top:
+        if src and refs:
             try:
-                v = span_vec(top[0]["id"], src, top[0]["start_sec"], top[0]["end_sec"])
+                v = span_vec(best["id"], src, best["start_sec"], best["end_sec"])
                 match = voice.top_matches(v, refs, 3)
             except Exception as e:
                 err = str(e)[:200]
@@ -378,6 +427,10 @@ def enroll_candidates(recording_id: int):
             "total_sec": round(sum(s["end_sec"] - s["start_sec"] for s in items), 1),
             "count": len(items),
             "top": top,
+            # именно этот фрагмент уйдёт в эталон при подтверждении (самый длинный чистый)
+            "enroll_span": {"id": best["id"], "start_sec": best["start_sec"],
+                            "end_sec": best["end_sec"]},
+            "ambiguous_count": sum(1 for s in items if s["ambiguous"]),
             "match": match,
             "match_error": err,
         })
@@ -613,3 +666,109 @@ def costs_today():
                coalesce(sum(usd), 0) AS total
         FROM costs""")
     return {"today_usd": float(row["today"]), "total_usd": float(row["total"])}
+
+
+def _f(v, default=0.0):
+    """numeric из Postgres приезжает Decimal — считать производные метрики в float."""
+    return default if v is None else float(v)
+
+
+@app.get("/api/usage")
+def usage():
+    """Куда уходят деньги: итоги, разбивка по моделям и записям, динамика по дням."""
+    tot = q1("""
+        SELECT coalesce(sum(usd) FILTER (WHERE day = current_date), 0)      AS today,
+               coalesce(sum(usd) FILTER (WHERE day >= current_date - 6), 0) AS week,
+               coalesce(sum(usd), 0)                                        AS total,
+               count(*)                                                     AS calls,
+               min(day)                                                     AS first_day
+        FROM costs""")
+
+    # знаменатели для «$ за час»: для черновика — вся длительность записи,
+    # для качества — только речевые регионы, размеченные черновиком (jobs.meta.speech_sec)
+    models = q("""
+        WITH c AS (SELECT model, kind, recording_id, sum(usd) AS usd, count(*) AS calls
+                     FROM costs GROUP BY 1, 2, 3),
+             d AS (SELECT r.id, r.duration_sec::numeric AS audio_sec,
+                          (SELECT max((j.meta->>'speech_sec')::numeric)
+                             FROM jobs j
+                            WHERE j.recording_id = r.id AND j.stage = 'draft'
+                              AND j.meta ? 'speech_sec') AS speech_sec
+                     FROM recordings r)
+        SELECT c.model, c.kind,
+               sum(c.usd)                     AS usd,
+               sum(c.calls)                   AS calls,
+               count(DISTINCT c.recording_id) AS recordings,
+               sum(d.audio_sec)               AS audio_sec,
+               sum(d.speech_sec)              AS speech_sec
+          FROM c LEFT JOIN d ON d.id = c.recording_id
+         GROUP BY 1, 2
+         ORDER BY sum(c.usd) DESC""")
+
+    by_model = []
+    for m in models:
+        usd = _f(m["usd"])
+        audio_h = _f(m["audio_sec"]) / 3600
+        speech_h = _f(m["speech_sec"]) / 3600
+        base = {"draft": audio_h, "quality": speech_h}.get(m["kind"], 0.0)
+        by_model.append({
+            "model": m["model"], "kind": m["kind"],
+            "usd": round(usd, 6),
+            "calls": int(m["calls"] or 0),
+            "recordings": int(m["recordings"] or 0),
+            "audio_hours": round(audio_h, 3) if audio_h else None,
+            "speech_hours": round(speech_h, 3) if speech_h else None,
+            # null, если знаменателя нет (нет длительностей / нет карты речи) — не выдумываем
+            "usd_per_audio_hour": round(usd / base, 4) if base > 0 else None,
+            "basis": {"draft": "запись", "quality": "речь"}.get(m["kind"]),
+        })
+
+    recs = q("""
+        SELECT r.id, coalesce(r.title, r.filename) AS title, r.filename,
+               r.duration_sec, r.started_at, r.created_at,
+               coalesce(sum(c.usd) FILTER (WHERE c.kind = 'draft'), 0)   AS draft_usd,
+               coalesce(sum(c.usd) FILTER (WHERE c.kind = 'quality'), 0) AS quality_usd,
+               coalesce(sum(c.usd) FILTER (WHERE c.kind = 'judge'), 0)   AS judge_usd,
+               coalesce(sum(c.usd), 0)                                   AS total_usd,
+               count(c.id)                                               AS calls
+          FROM recordings r JOIN costs c ON c.recording_id = r.id
+         GROUP BY r.id
+         ORDER BY sum(c.usd) DESC, r.id DESC""")
+
+    by_recording = []
+    for r in recs:
+        total = _f(r["total_usd"])
+        hours = _f(r["duration_sec"]) / 3600
+        by_recording.append({
+            "id": r["id"], "title": r["title"], "filename": r["filename"],
+            "duration_sec": _f(r["duration_sec"], None),
+            "started_at": r["started_at"], "created_at": r["created_at"],
+            "draft_usd": round(_f(r["draft_usd"]), 6),
+            "quality_usd": round(_f(r["quality_usd"]), 6),
+            "judge_usd": round(_f(r["judge_usd"]), 6),
+            "total_usd": round(total, 6),
+            "calls": int(r["calls"] or 0),
+            "usd_per_hour": round(total / hours, 4) if hours > 0 else None,
+        })
+
+    daily = q("""
+        SELECT to_char(g.d, 'YYYY-MM-DD') AS day,
+               coalesce(sum(c.usd), 0) AS usd, count(c.id) AS calls
+          FROM generate_series(current_date - 13, current_date, interval '1 day') g(d)
+          LEFT JOIN costs c ON c.day = g.d::date
+         GROUP BY g.d ORDER BY g.d""")
+
+    today = _f(tot["today"])
+    return {
+        "budget_usd": DAILY_BUDGET_USD,
+        "today_usd": round(today, 6),
+        "week_usd": round(_f(tot["week"]), 6),
+        "total_usd": round(_f(tot["total"]), 6),
+        "left_today_usd": round(DAILY_BUDGET_USD - today, 6),
+        "calls": int(tot["calls"] or 0),
+        "first_day": tot["first_day"],
+        "by_model": by_model,
+        "by_recording": by_recording,
+        "daily": [{"day": d["day"], "usd": round(_f(d["usd"]), 6), "calls": int(d["calls"] or 0)}
+                  for d in daily],
+    }

@@ -243,10 +243,20 @@ def recover_zombies() -> None:
     rows = db.q("""UPDATE jobs SET status='failed', finished_at=now(),
                    error=COALESCE(error,'') || ' [прервано рестартом воркера]'
                    WHERE status='running' RETURNING recording_id""") or []
-    if rows:
-        ids = sorted({r[0] for r in rows})
-        db.q("UPDATE recordings SET status='new' WHERE id = ANY(%s) AND status='processing'", ids)
-        log(f"после рестарта возвращено в очередь записей: {ids}")
+    if not rows:
+        return
+    for rec_id in sorted({r[0] for r in rows}):
+        # с какого этапа продолжать: всё, что уже оплачено и лежит в артефактах,
+        # переигрывать нельзя — это повторные деньги за ту же работу
+        stage = "draft"
+        if load_artifact(rec_id, "draft"):
+            stage = "quality"
+        if load_artifact(rec_id, "quality"):
+            stage = "resolve"
+        db.q("""UPDATE recordings
+                SET status='new', meta = meta || jsonb_build_object('reprocess_from', %s::text)
+                WHERE id=%s AND status='processing'""", stage, rec_id)
+        log(f"после рестарта запись #{rec_id} возвращена в очередь с этапа {stage}")
 
 
 def main() -> None:
