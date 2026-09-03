@@ -43,14 +43,17 @@ def utterances_from_scribe(resp: dict, offset: float, chunk_tag: str) -> list[Ut
             continue
         spk = f"{chunk_tag}:{w.get('speaker_id') or 'unknown'}"
         st, en = float(w.get("start", 0)) + offset, float(w.get("end", 0)) + offset
+        # таймкоды слов у Scribe локальны для куска — сохраняем ГЛОБАЛЬНЫЕ, иначе
+        # вырезка аудио по словам (сплиттер, эмбеддинги) уедет в другое место файла
+        gw = dict(w, start=st, end=en)
         if cur and cur.raw_speaker == spk and st - cur.end <= config.UTTER_GAP_SEC:
             cur.end = en
             cur.text += (" " if not cur.text.endswith(" ") else "") + w.get("text", "")
-            cur.words.append(w)
+            cur.words.append(gw)
         else:
             if cur:
                 out.append(cur)
-            cur = Utterance(start=st, end=en, text=w.get("text", ""), raw_speaker=spk, words=[w])
+            cur = Utterance(start=st, end=en, text=w.get("text", ""), raw_speaker=spk, words=[gw])
     if cur:
         out.append(cur)
     for u in out:
@@ -60,16 +63,78 @@ def utterances_from_scribe(resp: dict, offset: float, chunk_tag: str) -> list[Ut
     return out
 
 
+def _speech_spans(words: list) -> list[tuple[float, float]]:
+    return [(float(w["start"]), float(w["end"])) for w in words
+            if w.get("start") is not None and w.get("end") is not None]
+
+
+def _speech_sec(words: list) -> float:
+    return sum(e - s for s, e in _speech_spans(words))
+
+
+def split_mixed(u: Utterance, cache, depth: int = 0) -> list[Utterance]:
+    """Делит реплику, если внутри неё сменился говорящий (ошибка диаризации провайдера).
+
+    Точки разреза — границы слов (не слепая сетка): для каждой считаем вектор левой и
+    правой половины по СКЛЕЕННОЙ речи, ищем минимум косинуса. Если минимум ниже порога
+    и обе половины содержат достаточно речи — режем и проверяем половины рекурсивно.
+    """
+    words = u.words or []
+    if depth >= config.SPLIT_MAX_DEPTH or len(words) < 8:
+        return [u]
+    if u.end - u.start < config.SPLIT_MIN_SEC or _speech_sec(words) < 2 * config.SPLIT_MIN_SIDE_SEC:
+        return [u]
+
+    spans = _speech_spans(words)
+    best_i, best_cos = -1, 1.0
+    for i in range(3, len(words) - 3):
+        left, right = spans[:i], spans[i:]
+        if (sum(e - s for s, e in left) < config.SPLIT_MIN_SIDE_SEC or
+                sum(e - s for s, e in right) < config.SPLIT_MIN_SIDE_SEC):
+            continue
+        try:
+            cos = float(cache.embed_spans(left) @ cache.embed_spans(right))
+        except Exception:
+            continue
+        if cos < best_cos:
+            best_i, best_cos = i, cos
+
+    if best_i < 0 or best_cos > config.SPLIT_MAX_COS:
+        return [u]
+
+    lw, rw = words[:best_i], words[best_i:]
+    mk = lambda ws, tag: Utterance(
+        start=float(ws[0]["start"]), end=float(ws[-1]["end"]),
+        text=" ".join(w.get("text", "") for w in ws).strip(),
+        raw_speaker=f"{u.raw_speaker}#{tag}", words=ws,
+        asr_logprob=u.asr_logprob)
+    left_u, right_u = mk(lw, f"a{depth}"), mk(rw, f"b{depth}")
+    for part in (left_u, right_u):
+        part.detail = {"split_from": u.raw_speaker, "split_cos": round(best_cos, 3)}
+    return split_mixed(left_u, cache, depth + 1) + split_mixed(right_u, cache, depth + 1)
+
+
 def assign_speakers(utts: list[Utterance], src: Path, base: dict[str, np.ndarray]) -> dict:
     """Эмбеддинги -> кластеры -> имена. Возвращает сводку кластеров для артефакта."""
-    # 1) вектор каждой достаточно длинной реплики (файл декодируется один раз)
+    # 0) чиним склейки провайдера: длинные реплики, внутри которых сменился голос
     cache = embed_mod.AudioCache(src)
+    split_count = 0
+    fixed: list[Utterance] = []
     for u in utts:
-        if u.end - u.start >= config.MIN_EMBED_SEC:
-            try:
-                u.vec = cache.embed(u.start, u.end - u.start)
-            except Exception:
-                u.vec = None
+        parts = split_mixed(u, cache)
+        split_count += len(parts) - 1
+        fixed.extend(parts)
+    utts[:] = sorted(fixed, key=lambda x: x.start)
+
+    # 1) вектор каждой достаточно длинной реплики (по склеенной речи, без пауз)
+    for u in utts:
+        if u.end - u.start < config.MIN_EMBED_SEC:
+            continue
+        try:
+            u.vec = (cache.embed_spans(_speech_spans(u.words)) if u.words
+                     else cache.embed(u.start, u.end - u.start))
+        except Exception:
+            u.vec = None
 
     # 2) кластеризация raw_speaker-меток (они локальны для куска) по центроидам
     by_label: dict[str, list[np.ndarray]] = {}
@@ -87,8 +152,13 @@ def assign_speakers(utts: list[Utterance], src: Path, base: dict[str, np.ndarray
         n = np.linalg.norm(m)
         label_vec[lab] = m / n if n else m
 
+    # Фаза 1: кластеризуем только метки с надёжным вектором (говорили достаточно долго).
+    # Короткие обрывки — особенно осколки от сплиттера — имеют шумный вектор и, попадая
+    # в общую кластеризацию, плодят микрокластеры по 4-10 секунд вместо реальных людей.
+    solid = [l for l in label_vec if spoke.get(l, 0) >= config.CLUSTER_MIN_SEC]
+    weak = [l for l in label_vec if l not in solid]
     clusters: list[dict] = []
-    for lab in sorted(label_vec, key=lambda l: -spoke.get(l, 0)):
+    for lab in sorted(solid, key=lambda l: -spoke.get(l, 0)):
         v = label_vec[lab]
         best_i, best_cos = -1, 0.0
         for i, c in enumerate(clusters):
@@ -105,6 +175,21 @@ def assign_speakers(utts: list[Utterance], src: Path, base: dict[str, np.ndarray
         else:
             clusters.append({"labels": [lab], "sum": v.copy(),
                              "spoke": spoke.get(lab, 0.0), "first": first.get(lab, 0.0)})
+
+    # Фаза 2: короткие метки приписываем к ближайшему сформированному кластеру
+    # (без порога — просто ближайший); низкая уверенность отметится на уровне реплик.
+    for lab in sorted(weak, key=lambda l: -spoke.get(l, 0)):
+        v = label_vec[lab]
+        if not clusters:
+            clusters.append({"labels": [lab], "sum": v.copy(),
+                             "spoke": spoke.get(lab, 0.0), "first": first.get(lab, 0.0)})
+            continue
+        best_i = max(range(len(clusters)),
+                     key=lambda i: float((clusters[i]["sum"] / np.linalg.norm(clusters[i]["sum"])) @ v))
+        c = clusters[best_i]
+        c["labels"].append(lab)
+        c["spoke"] += spoke.get(lab, 0.0)     # вектор кластера НЕ обновляем шумным обрывком
+        c["first"] = min(c["first"], first.get(lab, 0.0))
 
     # 3) имя кластеру: матч центроида против базы голосов
     label_to_name: dict[str, str] = {}
@@ -147,7 +232,7 @@ def assign_speakers(utts: list[Utterance], src: Path, base: dict[str, np.ndarray
                         "cluster_default": {"name": cluster_name, "cos": round(cl_cos, 3)},
                         "reason": ("cluster_mismatch" if mismatch else
                                    "top2_close" if margin < config.TOP2_MARGIN else "low_confidence")}
-    return {"clusters": summary, "labels": label_to_name}
+    return {"clusters": summary, "labels": label_to_name, "splits": split_count}
 
 
 JUDGE_PROMPT = """Диалог, транскрипт с автоматически определёнными спикерами. У одной реплики

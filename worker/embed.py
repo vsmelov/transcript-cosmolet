@@ -59,6 +59,25 @@ class AudioCache:
             raise ValueError("кусок короче 0.5с")
         return _vector(self.samples[a:b])
 
+    def embed_spans(self, spans: list[tuple[float, float]]) -> np.ndarray:
+        """Вектор по СКЛЕЕННЫМ интервалам речи (паузы и фон между словами выброшены).
+
+        Слепое окно фиксированной длины может попасть в паузу или шум; интервалы
+        слов от Scribe дают чистую речь, из которой вектор получается устойчивее.
+        """
+        parts = []
+        total = 0.0
+        for s, e in spans:
+            a, b = max(0, int(s * self.sr)), min(len(self.samples), int(e * self.sr))
+            if b > a:
+                parts.append(self.samples[a:b])
+                total += (b - a) / self.sr
+                if total >= config.EMBED_CLIP_MAX_SEC:
+                    break
+        if total < 0.8:
+            raise ValueError("речи меньше 0.8с")
+        return _vector(np.concatenate(parts))
+
 
 def known_speakers() -> dict[str, np.ndarray]:
     """Эталон каждого человека: среднее нормированных векторов всех его сэмплов."""

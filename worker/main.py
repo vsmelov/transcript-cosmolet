@@ -142,9 +142,11 @@ def stage_quality(rec_id: int, src: Path, smap: dict) -> list:
                 utts += diarize.utterances_from_scribe(resp, pos, f"r{ri}p{int(pos)}")
                 pos += take
         utts.sort(key=lambda u: u.start)
+        # words сохраняем: без них нельзя переиграть resolve (детектор смены говорящего
+        # режет реплики по границам слов) без повторной оплаты транскрипции
         path = artifact(rec_id, "quality", {"utterances": [
             {"start": u.start, "end": u.end, "raw_speaker": u.raw_speaker,
-             "text": u.text, "asr_logprob": u.asr_logprob} for u in utts]})
+             "text": u.text, "asr_logprob": u.asr_logprob, "words": u.words} for u in utts]})
         db.job_done(job, cost_total, path, {"utterances": len(utts)})
         log(f"качество: {len(utts)} реплик, ${cost_total:.4f}")
         return utts
@@ -167,10 +169,13 @@ def stage_resolve(rec_id: int, src: Path, utts: list) -> dict:
                 db.add_cost(cost, "judge", config.JUDGE_MODEL, rec_id, f"conflicts={amb_before}")
         path = artifact(rec_id, "resolve", {
             "clusters": info["clusters"], "base_speakers": sorted(base),
+            "split_utterances": info.get("splits", 0),
             "ambiguous_before_judge": amb_before, "closed_by_judge": closed,
             "ambiguous_after": sum(1 for u in utts if u.ambiguous)})
-        db.job_done(job, cost, path, {"clusters": len(info["clusters"]), "closed_by_judge": closed})
+        db.job_done(job, cost, path, {"clusters": len(info["clusters"]),
+                                      "closed_by_judge": closed, "splits": info.get("splits", 0)})
         log(f"опознание: {[c['name'] for c in info['clusters']]}, "
+            f"разрезано склеек: {info.get('splits', 0)}, "
             f"спорных {amb_before} -> {sum(1 for u in utts if u.ambiguous)}")
         return info
     except Exception:
@@ -178,13 +183,46 @@ def stage_resolve(rec_id: int, src: Path, utts: list) -> dict:
         raise
 
 
+def load_artifact(rec_id: int, name: str) -> dict | None:
+    p = config.ARTIFACTS / f"rec_{rec_id}" / f"{name}.json"
+    if not p.is_file():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
 def process(rec) -> None:
     rec_id, filename, audio_path, dur = rec[0], rec[1], Path(rec[2]), float(rec[3] or 0)
-    log(f"=== запись #{rec_id} {filename} ({dur/60:.1f} мин)")
-    db.q("UPDATE recordings SET status='processing' WHERE id=%s", rec_id)
+    meta = db.q1("SELECT meta FROM recordings WHERE id=%s", rec_id)[0] or {}
+    if isinstance(meta, str):
+        meta = json.loads(meta)
+    # переигрывание с этапа: артефакты предыдущих этапов уже оплачены и лежат на диске
+    from_stage = meta.get("reprocess_from") or "draft"
+    log(f"=== запись #{rec_id} {filename} ({dur/60:.1f} мин)" +
+        (f" [переигрываем с {from_stage}]" if from_stage != "draft" else ""))
+    db.q("UPDATE recordings SET status='processing', meta = meta - 'reprocess_from' WHERE id=%s", rec_id)
     try:
-        smap = stage_draft(rec_id, audio_path, dur)
-        utts = stage_quality(rec_id, audio_path, smap)
+        if from_stage in ("quality", "resolve"):
+            cached = load_artifact(rec_id, "draft")
+            if not cached:
+                raise RuntimeError("нет артефакта draft — переиграть можно только с draft")
+            smap = cached["speech_map"]
+        else:
+            smap = stage_draft(rec_id, audio_path, dur)
+
+        if from_stage == "resolve":
+            cached = load_artifact(rec_id, "quality")
+            if not cached:
+                raise RuntimeError("нет артефакта quality — переиграть можно только с quality")
+            utts = [diarize.Utterance(
+                start=u["start"], end=u["end"], text=u["text"],
+                raw_speaker=u["raw_speaker"], words=u.get("words") or [],
+                asr_logprob=u.get("asr_logprob")) for u in cached["utterances"]]
+            log(f"reuse quality: {len(utts)} реплик из артефакта (без оплаты)")
+        else:
+            utts = stage_quality(rec_id, audio_path, smap)
         info = stage_resolve(rec_id, audio_path, utts)
         job = db.job_start(rec_id, "store")
         md = store.save(rec_id, filename, audio_path, dur, utts, info["clusters"], smap)
