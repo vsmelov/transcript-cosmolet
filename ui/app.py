@@ -856,7 +856,10 @@ def segments_bulk(body: dict):
     """Массовое действие над выбранными фразами: всем один спикер (или '[noise]').
 
     Эталон по умолчанию НЕ создаётся: пачка выбрана глазами по списку, среди неё почти
-    наверняка есть обрывки. enroll=true берёт под эталон одну — самую длинную — фразу.
+    наверняка есть обрывки. enroll="longest" берёт одну самую длинную фразу, "all" —
+    каждую подходящую: когда человек прослушал и уверен во всех, это самый быстрый
+    способ набрать базу голоса. Слишком короткие пропускаем молча — эталон из
+    полусекундного обрывка только портит центроид.
     """
     b = body or {}
     ids = []
@@ -869,19 +872,26 @@ def segments_bulk(body: dict):
     if not ids or not name:
         raise HTTPException(400, "ids and name are required")
 
-    enrolled, err = None, None
-    if bool(b.get("enroll", False)) and name != "[noise]":
-        best = q1("""SELECT id, recording_id, start_sec, end_sec FROM segments
-                     WHERE id = ANY(%s) ORDER BY end_sec - start_sec DESC LIMIT 1""", (ids,))
-        if best is not None:
+    # enroll: false/"none" | true/"longest" | "all"
+    mode = b.get("enroll", False)
+    mode = "longest" if mode is True else ("none" if mode is False else str(mode))
+    enrolled, err, added = None, None, 0
+    if mode in ("longest", "all") and name != "[noise]":
+        rows = q("""SELECT id, recording_id, start_sec, end_sec FROM segments
+                     WHERE id = ANY(%s) ORDER BY end_sec - start_sec DESC""", (ids,))
+        if mode == "longest":
+            rows = rows[:1]
+        for r in rows:
+            if float(r["end_sec"]) - float(r["start_sec"]) < 1.5:
+                continue          # короче полутора секунд — сигнала мало, центроид испортит
             try:
-                enrolled = enroll({"recording_id": best["recording_id"],
-                                   "start_sec": best["start_sec"], "end_sec": best["end_sec"],
-                                   "speaker_name": name})
+                enrolled = enroll({"recording_id": r["recording_id"], "start_sec": r["start_sec"],
+                                   "end_sec": r["end_sec"], "speaker_name": name})
+                added += 1
             except HTTPException as e:
                 err = str(e.detail)
 
-    note = f"user:{name} (массово, {'с эталоном' if enrolled else 'без эталона'})"
+    note = f"user:{name} (массово, {f'эталонов +{added}' if added else 'без эталона'})"
 
     def run(c):
         with c.transaction():
@@ -902,6 +912,7 @@ def segments_bulk(body: dict):
 
     updated, closed = _run(run)
     return {"ok": True, "updated": updated, "conflicts_closed": closed, "name": name,
+            "enrolled_added": added,
             "enrolled": enrolled, "enroll_error": err,
             "segments": segments_by_ids(ids)}
 

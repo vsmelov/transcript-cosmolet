@@ -265,8 +265,13 @@ svg text{font-family:inherit}
     <select id="bulkWho" title="кому отдать все выбранные фразы"><option value="">— кому отдать —</option></select>
     <button class="act" data-act="bassign"
       title="Назначить выбранным фразам этого спикера: имя сменится, пометка «спорный» снимется, открытые конфликты закроются.">→ назначить спикера</button>
-    <label class="chk" title="Отмечено — самая длинная из выбранных фраз дополнительно уйдёт в эталоны голоса. Снято (по умолчанию) — база голосов не меняется: в пачке, выбранной глазами, почти всегда есть обрывки.">
-      <input type="checkbox" id="bulkEnroll"> + эталон из самой длинной</label>
+    <select id="bulkEnroll" title="Что сделать с базой голоса этого человека.
+По умолчанию она не меняется: в пачке, выбранной глазами, почти всегда попадаются обрывки.
+«Все выбранные» — когда вы прослушали каждую фразу и уверены: это самый быстрый способ набрать базу.">
+      <option value="none">эталоны не трогать</option>
+      <option value="longest">+ эталон из самой длинной</option>
+      <option value="all">+ эталоны из ВСЕХ выбранных</option>
+    </select>
     <button class="act" data-act="bnoise"
       title="Пометить все выбранные фразы как шум/фон ([noise]). Эталоны не создаются, конфликты закрываются.">🗑 мусор / фон</button>
     <button class="act" data-act="bclear" title="Снять выделение со всех фраз.">снять выделение</button>
@@ -944,7 +949,9 @@ document.addEventListener('keydown', e => {
 function bulkSync(){
   const n = SEL.size;
   document.body.classList.toggle('bulk', n > 0);
-  $('bulkBar').style.display = n ? '' : 'none';
+  // именно 'block', а не '': в CSS у панели display:none, и пустая строка
+  // возвращала бы её к тому же none — панель не показывалась после выбора фраз
+  $('bulkBar').style.display = n ? 'block' : 'none';
   if (!n) return;
   $('bulkN').textContent = 'выбрано ' + plural(n, 'фраза', 'фразы', 'фраз');
   const sel = $('bulkWho'), cur = sel.value;
@@ -956,10 +963,12 @@ function bulkSync(){
 // панель обязана заранее сказать, что именно случится с выбранными фразами
 function bulkWhat(){
   const n = SEL.size, who = $('bulkWho').value, ph = plural(n, 'фраза', 'фразы', 'фраз');
+  const em = $('bulkEnroll').value;
   $('bulkWhat').textContent = who
     ? `${ph} получат спикера «${who}», пометка «спорный» снимется, открытые конфликты закроются` +
-      ($('bulkEnroll').checked ? '; самая длинная из выбранных уйдёт в эталоны голоса'
-                               : '; эталоны голоса не создаются')
+      (em === 'all' ? `; каждая фраза длиннее 1.5с уйдёт в эталоны голоса «${who}»`
+       : em === 'longest' ? '; самая длинная из выбранных уйдёт в эталоны голоса'
+       : '; эталоны голоса не создаются')
     : `выберите человека — тогда ${ph} получат его имя; либо нажмите «мусор / фон»`;
 }
 
@@ -976,13 +985,15 @@ async function bulkApply(name){
   // много реплик разом — это трудно откатить, поэтому переспрашиваем
   if (ids.length > 10 && !confirm(`Подтвердите: ${what}.\nЭто затронет ${ids.length} реплик и закроет их конфликты.`))
     return;
-  const enroll = name !== '[noise]' && $('bulkEnroll').checked;
+  const enroll = name === '[noise]' ? 'none' : $('bulkEnroll').value;
   try {
     const r = await api('/api/segments/bulk', {method:'POST', body:{ids, name, enroll}});
     SEL.clear(); bulkSync();
-    showErr(`готово: обновлено ${r.updated}` +
-      (r.conflicts_closed ? `, закрыто конфликтов ${r.conflicts_closed}` : '') +
-      (r.enrolled ? `, эталонов у ${name}: ${r.enrolled.samples_total}` : ''));
+    toast('Готово', `${name}: обновлено реплик ${r.updated}` +
+      (r.conflicts_closed ? `, закрыто спорных ${r.conflicts_closed}` : '') +
+      (r.enrolled_added ? `, добавлено эталонов ${r.enrolled_added}` +
+        (r.enrolled ? ` (всего у человека ${r.enrolled.samples_total})` : '') : '') +
+      (r.enroll_error ? `. Часть эталонов не вышла: ${r.enroll_error}` : ''), 'ok', 9000);
     afterEdit();
     await refreshScreen();
   } catch (e){}
@@ -1883,6 +1894,7 @@ const UACTS = new Set(['uplay', 'uok', 'uassign', 'unew', 'unoise', 'usplit', 'u
 // Выбор человека в списке меняет смысл кнопки подтверждения: пользователь выбирает
 // имя и жмёт «подтвердить», ожидая назначить именно его — надпись это показывает.
 document.addEventListener('change', e => {
+  if (e.target.id === 'bulkEnroll' || e.target.id === 'bulkWho'){ bulkWhat(); return; }
   const sel = e.target.closest('[data-role="who"]');
   if (!sel) return;
   const box = sel.closest('.utt');
@@ -1997,10 +2009,9 @@ document.addEventListener('click', async e => {
       else if (a === 'ereload') await loadCandidates(+$('enrollSel').value);
       else if (a === 'ewho') await enrollAct(card, 'who');
       else if (a === 'enew') await enrollAct(card, 'new');
-      else if (a === 'etrash'){
-        if (confirm('Пометить весь кластер как мусор/фон? Эталон добавлен не будет.'))
-          await enrollAct(card, 'trash');
-      }
+      // без подтверждения: пометка мусора — частое действие и легко откатывается
+      // назначением человека, а модальное окно каждый раз только мешает разбирать
+      else if (a === 'etrash') await enrollAct(card, 'trash');
       else if (a === 'rep'){
         if (confirm('Переиграть запись #' + b.dataset.rid + ' с этапа ' + b.dataset.stage + '?')){
           await api('/api/recordings/' + b.dataset.rid + '/reprocess', {method: 'POST', body: {from_stage: b.dataset.stage}});
