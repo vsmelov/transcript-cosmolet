@@ -37,6 +37,7 @@ services:
       DATABASE_URL: postgresql://cosmolet:${POSTGRES_PASSWORD}@db:5432/cosmolet
       DATA_DIR: /data
       EMBED_MODEL: /models/campplus_zh_en_advanced.onnx
+      DAILY_BUDGET_USD: ${DAILY_BUDGET_USD}   # тот же предохранитель, что у воркера
     volumes:
       - ./data:/data
       - ./models:/models:ro

@@ -8,7 +8,11 @@
 :root{--bg:#0f1115;--panel:#161a22;--panel2:#1c2130;--border:#252b3b;--text:#e6e6e6;--dim:#8891a7;--acc:#7aa2f7;--red:#f7768e;--green:#9ece6a;--yellow:#e0af68;--hl:#1b2540}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,"Segoe UI",Roboto,sans-serif}
-header{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);z-index:5}
+/* шапка двухуровневая: строка навигации + строка глобального плеера.
+   sticky целиком, поэтому плеер виден на любой вкладке и не прыгает при переключении */
+header{border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);z-index:5}
+.hrow{display:flex;align-items:center;gap:14px;padding:8px 16px;flex-wrap:wrap}
+.hrow.pl{gap:10px;border-top:1px solid var(--border)}
 h1{font-size:16px;margin:0;color:var(--acc)}
 h3{margin:20px 0 8px;font-size:14px;color:var(--dim);font-weight:600}
 nav{display:flex;gap:4px}
@@ -25,15 +29,25 @@ tr[data-act]{cursor:pointer}
 tr[data-act]:hover td{background:var(--panel)}
 .st{display:inline-block;padding:1px 8px;border-radius:9px;font-size:12px;border:1px solid var(--border)}
 .st-new{color:var(--acc)}.st-processing,.st-running{color:var(--yellow)}.st-done{color:var(--green)}.st-failed{color:var(--red)}.st-pending,.st-skipped{color:var(--dim)}
+.st-download{color:var(--yellow);border-color:var(--yellow)}
+.badge.src{color:var(--dim);text-transform:lowercase}
+.badge.src-plaud{color:var(--acc);border-color:var(--acc)}
 button.act{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:3px 10px;cursor:pointer;font:inherit;font-size:12px}
 button.act:hover{border-color:var(--acc)}
 button.act.playing{border-color:var(--acc);background:rgba(122,162,247,.18);color:var(--acc)}
+button.act:disabled,button.act[disabled]{opacity:.4;cursor:not-allowed;border-color:var(--border)}
 button.lnk{background:none;border:none;color:var(--dim);cursor:pointer;font:inherit;font-size:12px;padding:0 4px;flex:none}
 button.lnk:hover{color:var(--acc)}
 button.lnk.ok{color:var(--green)}
 input{background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:3px 8px;font:inherit;font-size:12px;width:130px}
 select{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font:inherit;max-width:100%}
-audio{width:100%;margin:10px 0;display:block}
+/* единственный <audio> на страницу — он же в шапке */
+#player{flex:none;width:320px;height:34px;margin:0;display:block}
+#pnow{flex:1 1 240px;min-width:0;display:flex;align-items:center;gap:8px;font-size:12px;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#pnow b{overflow:hidden;text-overflow:ellipsis}
+#pstop{flex:none}
+.pico{flex:none;color:var(--acc)}
 a{color:var(--acc)}
 .dim{color:var(--dim)}
 .errtxt{color:var(--red)}
@@ -86,23 +100,30 @@ svg text{font-family:inherit}
 </head>
 <body>
 <header>
-  <h1>cosmolet</h1>
-  <nav>
-    <button data-tab="jobs" class="on">Jobs</button>
-    <button data-tab="tr">Транскрипт</button>
-    <button data-tab="voices">Голоса</button>
-    <button data-tab="disk">Диск</button>
-    <button data-tab="sp">Спикеры</button>
-    <button data-tab="usage">Usage</button>
-  </nav>
-  <span id="err"></span>
-  <span id="costBadge" data-act="goto" data-h="usage" title="куда уходят деньги →">…</span>
+  <div class="hrow">
+    <h1>cosmolet</h1>
+    <nav>
+      <button data-tab="jobs" class="on">Jobs</button>
+      <button data-tab="tr">Транскрипт</button>
+      <button data-tab="voices">Голоса</button>
+      <button data-tab="disk">Диск</button>
+      <button data-tab="sp">Спикеры</button>
+      <button data-tab="usage">Usage</button>
+    </nav>
+    <span id="err"></span>
+    <span id="costBadge" data-act="goto" data-h="usage" title="куда уходят деньги →">…</span>
+  </div>
+  <div class="hrow pl">
+    <audio id="player" controls preload="metadata"></audio>
+    <div id="pnow"><span class="dim">ничего не играет</span></div>
+    <button class="act" id="pstop" data-act="pstop" disabled>■ стоп</button>
+  </div>
 </header>
 <main>
   <section id="tab-jobs" class="tab">
     <table>
-      <thead><tr><th>ID</th><th>Запись</th><th>Статус</th><th>Длит.</th><th>Размер</th><th>Сегм.</th><th>Конфл.</th><th>Стоимость</th><th>Создана</th><th></th></tr></thead>
-      <tbody id="jobsBody"><tr><td colspan="10" class="dim">загрузка…</td></tr></tbody>
+      <thead><tr><th>ID</th><th>Запись</th><th>Источник</th><th>Статус</th><th>Длит.</th><th>Размер</th><th>Сегм.</th><th>Конфл.</th><th>Стоимость</th><th>Создана</th><th></th></tr></thead>
+      <tbody id="jobsBody"><tr><td colspan="11" class="dim">загрузка…</td></tr></tbody>
     </table>
   </section>
 
@@ -113,7 +134,6 @@ svg text{font-family:inherit}
         <button class="act" data-act="goto" data-h="transcript">← к списку</button>
       </div>
       <div id="trHead"></div>
-      <audio id="trAudio" controls preload="metadata"></audio>
       <div id="playHint" style="display:none;margin:6px 0">
         <button class="act" data-act="playat">▶ играть с <span id="playHintT"></span></button>
         <span class="dim" style="font-size:12px;margin-left:6px">браузер не даёт стартовать звук без клика</span>
@@ -128,7 +148,6 @@ svg text{font-family:inherit}
       <button data-vsec="enroll">Разметка записи</button>
       <button data-vsec="sugg">Предложения</button>
     </div>
-    <audio id="vAudio" controls preload="metadata"></audio>
     <div id="vsec-people" class="vsec" style="display:flex;gap:16px;align-items:flex-start">
       <div id="peopleList" style="flex:0 0 250px"><div class="dim">загрузка…</div></div>
       <div id="personCard" style="flex:1;min-width:0"><div class="dim">выберите человека слева</div></div>
@@ -156,7 +175,6 @@ svg text{font-family:inherit}
   </section>
 
   <section id="tab-sp" class="tab" style="display:none">
-    <audio id="spAudio" controls preload="none" style="max-width:420px"></audio>
     <div class="cards" id="spkList"><div class="dim">загрузка…</div></div>
     <h3 id="confHead">Конфликты</h3>
     <div id="confNote" class="dim" style="font-size:12px"></div>
@@ -172,8 +190,9 @@ svg text{font-family:inherit}
 'use strict';
 const $ = id => document.getElementById(id);
 let TAB = 'jobs', RECS = [], SEGS = [], SPK = [], CONF_BY_SEG = {}, OPEN = null, CUR_RID = null, PEND_T = null;
-let VSEC = 'people', VPEOPLE = [], VPERSON = null, ERID = null, ECAND = null, VSTOP = null;
-let RSUM = null;   // /api/recordings/summary — список записей со спикерами
+let VSEC = 'people', VPEOPLE = [], VPERSON = null, ERID = null, ECAND = null;
+let RSUM = null;      // /api/recordings/summary — список записей со спикерами
+let TR_AUDIO = true;  // у открытой в «Транскрипте» записи есть аудиофайл
 
 // ---------- утилиты ----------
 const esc = s => (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -185,10 +204,22 @@ const fmtHrs = h => h == null ? '—' : (+h).toFixed(h >= 10 ? 0 : 1) + ' ч';
 const fmtBytes = b => b == null ? '—' : (b >= 1073741824 ? (b/1073741824).toFixed(2)+' ГБ' : (b/1048576).toFixed(1)+' МБ');
 const fmtDT = s => s ? new Date(s).toLocaleString('ru-RU', {hour12:false}) : '—';
 const fmtDay = s => s ? String(s).slice(0, 10) : '—';
+const plural = (n, one, few, many) => {
+  const a = Math.abs(+n || 0) % 100, b = a % 10;
+  return n + ' ' + ((a > 10 && a < 20) || b === 0 || b > 4 ? many : (b === 1 ? one : few));
+};
 const hue = n => { let h = 0; for (const c of String(n || '')) h = (h*31 + c.charCodeAt(0)) >>> 0; return h % 360; };
 const spkCol = n => `hsl(${hue(n)},60%,70%)`;
 const linkBtn = h => `<button class="lnk" data-act="link" data-h="${esc(h)}" title="скопировать ссылку">🔗</button>`;
 const recTitle = r => r.title || r.filename;
+// откуда приехала запись: inbox / plaud / manual
+const srcBadge = s => s ? `<span class="badge src src-${esc(s)}" title="источник записи">${esc(s)}</span>` : '';
+// статус записи: пока идёт скачивание из облака, «new» — это не поломка, а ожидание
+function stCell(r){
+  if (r.downloading) return '<span class="st st-download" title="скачиваем из облака">скачивается</span>';
+  if (r.status === 'new') return '<span class="st st-new" title="new — ждёт конвейера">в очереди</span>';
+  return `<span class="st st-${esc(r.status)}">${esc(r.status)}</span>`;
+}
 const cohCol = v => v == null ? 'var(--dim)' : (v >= 0.75 ? 'var(--green)' : (v >= 0.5 ? 'var(--yellow)' : 'var(--red)'));
 const cohTxt = v => v == null ? '—' : (+v).toFixed(2);
 const optList = () => VPEOPLE.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
@@ -236,6 +267,165 @@ async function copyLink(hash, btn){
   btn.classList.toggle('ok', ok);
   setTimeout(() => { btn.textContent = prev; btn.classList.remove('ok'); }, 1400);
 }
+
+// ---------- единый плеер в шапке ----------
+// Один <audio id="player"> на всё приложение: вкладки переключаются, звук не теряется,
+// а строка состояния рядом всегда отвечает на «что это сейчас играет и как это выключить».
+const PLAYER = {
+  src: '',      // что загружено (логический URL, а не a.src с origin)
+  title: '',    // подпись для строки состояния: запись или чей это сэмпл
+  span: null,   // [start, end|null] — слушаемый отрезок
+  btn: null,    // кнопка, с которой запущено: показывает ⏸, повторный клик — стоп
+  label: '',    // её исходная подпись
+  stop: null,   // точка остановки отрезка, сек
+  queue: null,  // очередь «подряд»: {items, idx, src, title, btn, label}
+};
+let QT = null;    // таймер перехода к следующему фрагменту очереди
+let CUT = false;  // паузу поставили мы, дойдя до конца отрезка (а не пользователь)
+
+const AU = $('player');
+const recSrc = rid => '/api/audio/' + rid;
+// подпись записи для строки состояния: список записей может быть ещё не загружен
+function recLabel(rid){
+  const pick = l => (l || []).find(x => +x.id === +rid);
+  const r = pick(RSUM) || pick(RECS);
+  return 'запись #' + rid + (r ? ' · ' + recTitle(r) : '');
+}
+
+function markBtn(btn){
+  releaseBtn();
+  if (!btn) return;
+  PLAYER.btn = btn; PLAYER.label = btn.innerHTML;
+  const h = btn.innerHTML.replace('▶', '⏸');
+  btn.innerHTML = (h === PLAYER.label) ? '⏸ ' + PLAYER.label : h;
+  btn.classList.add('playing');
+}
+function releaseBtn(){
+  if (PLAYER.btn){ PLAYER.btn.innerHTML = PLAYER.label; PLAYER.btn.classList.remove('playing'); }
+  PLAYER.btn = null; PLAYER.label = '';
+}
+
+function renderNow(){
+  const el = $('pnow');
+  if (!PLAYER.src){
+    el.innerHTML = '<span class="dim">ничего не играет</span>';
+    $('pstop').disabled = true;
+    return;
+  }
+  const q = PLAYER.queue;
+  const sp = PLAYER.span
+    ? `<span class="mono dim">${fmtT(PLAYER.span[0])}${PLAYER.span[1] != null ? '–' + fmtT(PLAYER.span[1]) : ''}</span>`
+    : '';
+  el.innerHTML = `<span class="pico">${AU.paused ? '⏸' : '▶'}</span><b title="${esc(PLAYER.title)}">${esc(PLAYER.title || '—')}</b>${sp}` +
+    (q ? `<span class="badge">подряд ${q.idx}/${q.items.length}</span>` : '');
+  $('pstop').disabled = AU.paused && !q;
+}
+
+// единая точка запуска: {src, start, end, btn, title}
+function play(o){
+  const fresh = PLAYER.src !== o.src;     // тот же файл не перезагружаем
+  markBtn(o.btn || null);
+  PLAYER.title = o.title || '';
+  const st = (o.start == null) ? null : +o.start;
+  const en = (o.end != null && +o.end > (st || 0)) ? +o.end : null;
+  PLAYER.span = (st == null) ? null : [st, en];
+  // точку остановки ставим ВНУТРИ go(): смена src бросает 'emptied', чей обработчик
+  // её обнуляет — иначе отрезок играл бы до конца записи
+  const go = () => {
+    CUT = false;
+    PLAYER.stop = en;
+    if (st != null){ try { AU.currentTime = st; } catch (e) {} }
+    AU.play().catch(() => {});
+    renderNow();
+  };
+  if (fresh){ PLAYER.src = o.src; AU.src = o.src; }
+  else if (AU.readyState >= 1){ go(); return; }
+  if (st == null){ AU.load(); go(); return; }   // играем целиком — метаданные ждать незачем
+  // без load() браузер может не начать качать метаданные и loadedmetadata не наступит
+  AU.addEventListener('loadedmetadata', go, {once: true});
+  AU.load();
+  renderNow();
+}
+
+function stopAll(){
+  endQueue();
+  PLAYER.stop = null; CUT = false;
+  try { AU.pause(); } catch (e) {}
+  releaseBtn();
+  renderNow();
+}
+// повторный клик по той же кнопке = стоп
+function toggleSame(btn){
+  if (PLAYER.btn === btn && !AU.paused){ stopAll(); return true; }
+  return false;
+}
+// подложить запись в плеер, не запуская: клик по реплике не будет ждать сеть.
+// Если уже играет что-то другое — не перебиваем.
+function preload(src, title){
+  if (PLAYER.src === src){ PLAYER.title = title; renderNow(); return; }
+  if (!AU.paused) return;
+  PLAYER.src = src; PLAYER.title = title; PLAYER.span = null; PLAYER.stop = null;
+  AU.src = src; AU.load();
+  renderNow();
+}
+
+function playSpan(rid, start, end, btn){
+  if (toggleSame(btn)) return;
+  endQueue();
+  play({src: recSrc(rid), start, end, btn, title: recLabel(rid)});
+}
+function playSample(sid, btn, who){
+  if (toggleSame(btn)) return;
+  endQueue();
+  play({src: '/api/speakers/sample/' + sid, start: 0, btn, title: 'сэмпл · ' + (who || '#' + sid)});
+}
+
+// очередь фрагментов кластера: играем подряд, чтобы составить впечатление о голосе
+function startQueue(items, src, title, btn){
+  endQueue(); releaseBtn();
+  PLAYER.queue = {items, idx: 0, src, title, btn, label: btn ? btn.innerHTML : ''};
+  playQueue();
+}
+function playQueue(){
+  const q = PLAYER.queue;
+  if (!q) return;
+  if (q.idx >= q.items.length){ stopAll(); return; }
+  const t = q.items[q.idx++];
+  if (q.btn){ q.btn.innerHTML = `⏸ подряд ${q.idx}/${q.items.length}`; q.btn.classList.add('playing'); }
+  play({src: q.src, start: t.start_sec, end: t.end_sec, title: q.title});
+}
+function endQueue(){
+  clearTimeout(QT); QT = null;
+  const q = PLAYER.queue;
+  PLAYER.queue = null;
+  if (q && q.btn){ q.btn.innerHTML = q.label; q.btn.classList.remove('playing'); }
+}
+
+// auto=true — доиграли отрезок сами; false — остановил пользователь, очередь прекращаем
+function halted(auto){
+  if (PLAYER.queue){
+    if (auto){ clearTimeout(QT); QT = setTimeout(() => { QT = null; playQueue(); }, 150); return; }
+    endQueue();
+  }
+  PLAYER.stop = null;
+  releaseBtn();
+  renderNow();
+}
+AU.addEventListener('timeupdate', () => {          // отрезок играем только до его конца
+  if (PLAYER.stop != null && AU.currentTime >= PLAYER.stop){
+    PLAYER.stop = null; CUT = true; AU.pause();
+  }
+});
+AU.addEventListener('pause', () => { const c = CUT; CUT = false; halted(c); });
+AU.addEventListener('ended', () => { CUT = false; halted(true); });
+AU.addEventListener('play', renderNow);
+// смена src бросает 'emptied' — это не конец фрагмента: очередь по нему не двигаем
+AU.addEventListener('emptied', () => { PLAYER.stop = null; renderNow(); });
+// файла нет / отдался битым — иначе кнопка навсегда осталась бы в ⏸
+AU.addEventListener('error', () => {
+  endQueue(); PLAYER.stop = null; releaseBtn(); renderNow();
+  showErr('аудио недоступно: ' + PLAYER.src);
+});
 
 // ---------- роутер ----------
 const TAB_HASH = {jobs:'jobs', tr:'transcript', voices:'voices', disk:'disk', sp:'speakers', usage:'usage'};
@@ -343,7 +533,7 @@ async function loadCosts(){
 async function loadJobs(){
   try { RECS = await api('/api/recordings'); }
   catch (e) {
-    $('jobsBody').innerHTML = '<tr><td colspan="10" class="errtxt">ошибка загрузки: ' +
+    $('jobsBody').innerHTML = '<tr><td colspan="11" class="errtxt">ошибка загрузки: ' +
       esc((e && e.message) || e) + '</td></tr>';
     return;
   }
@@ -358,7 +548,8 @@ function renderJobs(){
     let h = `<tr data-act="row" data-rid="${r.id}">
       <td class="mono">${r.id}</td>
       <td>${esc(recTitle(r))}${r.title && r.title !== r.filename ? `<div class="sub">${esc(r.filename)}</div>` : ''}</td>
-      <td><span class="st st-${esc(r.status)}">${esc(r.status)}</span></td>
+      <td>${srcBadge(r.source)}</td>
+      <td>${stCell(r)}</td>
       <td class="mono">${fmtT(r.duration_sec)}</td>
       <td class="mono">${fmtBytes(r.size_bytes)}</td>
       <td class="mono">${r.segments}</td>
@@ -367,10 +558,10 @@ function renderJobs(){
       <td class="dim mono">${fmtDT(r.created_at)}</td>
       <td>${linkBtn('jobs/' + r.id)}</td></tr>`;
     if (OPEN === r.id)
-      h += `<tr><td colspan="10"><div id="recdet" class="dim">загрузка…</div></td></tr>`;
+      h += `<tr><td colspan="11"><div id="recdet" class="dim">загрузка…</div></td></tr>`;
     return h;
   }).join('');
-  $('jobsBody').innerHTML = rows || '<tr><td colspan="10" class="dim">записей нет — положите файл в data/inbox</td></tr>';
+  $('jobsBody').innerHTML = rows || '<tr><td colspan="11" class="dim">записей нет — положите файл в data/inbox</td></tr>';
   if (hlRid){
     const el = document.querySelector('tr[data-rid="' + hlRid + '"]');
     HL_EL = el || null;
@@ -394,7 +585,9 @@ async function loadDetail(id){
   const rep = ['draft','quality','resolve'].map(s =>
     `<button class="act" data-act="rep" data-rid="${id}" data-stage="${s}">↻ переиграть с ${s}</button>`).join(' ');
   el.classList.remove('dim');
-  el.innerHTML = `<div class="sub">${esc(d.filename)}${d.started_at ? ' · запись начата ' + fmtDT(d.started_at) : ''}${d.audio_path ? '' : ' · аудио удалено'}</div>
+  el.innerHTML = `<div class="sub">${esc(d.filename)} · источник ${esc(d.source || '—')}${
+      d.started_at ? ' · запись начата ' + fmtDT(d.started_at) : ''}${
+      d.has_audio ? '' : (d.audio_path ? ' · <span class="errtxt">аудиофайла нет на диске</span>' : ' · аудио удалено')}</div>
     <div class="pipe">${pipe}</div>
     <div class="rsrow">${rep}
       <button class="act" data-act="goto" data-h="transcript/${id}">транскрипт →</button>
@@ -421,24 +614,28 @@ function spkBadges(list, max){
   const rest = all.length - head.length;
   if (!all.length) return '<span class="sub">спикеры не размечены</span>';
   return head.map(s => `<span class="badge spkb" style="color:${spkCol(s.name)};border-color:${spkCol(s.name)}"
-      title="${esc(s.name)}: ${s.segments} реплик">${esc(s.name)} · ${fmtMin(s.sec)}</span>`).join('') +
+      title="${esc(s.name)}: ${plural(s.segments, 'реплика', 'реплики', 'реплик')}">${esc(s.name)} · ${fmtMin(s.sec)}</span>`).join('') +
     (rest > 0 ? `<span class="badge">ещё ${rest}</span>` : '');
 }
 
-async function loadTrList(force){
+const recRows = list => list.length ? list.map(recRow).join('')
+  : '<div class="dim">записей нет — положите файл в data/inbox</div>';
+
+// в список возвращаются после разметки — перечитываем всегда, но сначала рисуем кэш, без мигания
+async function loadTrList(){
   const el = $('trList');
-  if (!RSUM || force){
-    if (!RSUM) el.innerHTML = '<div class="dim">загрузка…</div>';
-    try { RSUM = await api('/api/recordings/summary'); } catch (e) { fail(el, e); return; }
-  }
-  el.innerHTML = RSUM.length ? RSUM.map(recRow).join('')
-    : '<div class="dim">записей нет — положите файл в data/inbox</div>';
+  el.innerHTML = RSUM ? recRows(RSUM) : '<div class="dim">загрузка…</div>';
+  let d;
+  try { d = await api('/api/recordings/summary'); } catch (e) { if (!RSUM) fail(el, e); return; }
+  RSUM = d;
+  el.innerHTML = recRows(RSUM);
 }
 
 function recRow(r){
   return `<div class="rec" data-act="trgo" data-rid="${r.id}">
     <div class="main">
-      <div class="rtitle">${esc(recTitle(r))}</div>
+      <div class="rtitle">${esc(recTitle(r))} ${srcBadge(r.source)}${
+        r.has_audio === false ? '<span class="badge bad" title="аудиофайла нет на диске">без аудио</span>' : ''}</div>
       <div class="sub">#${r.id}${r.title && r.title !== r.filename ? ' · ' + esc(r.filename) : ''}</div>
       <div class="spks">${spkBadges(r.speakers, 8)}</div>
     </div>
@@ -446,7 +643,7 @@ function recRow(r){
       <div class="rdate mono">${fmtDT(r.started_at || r.created_at)}</div>
       <div class="sub mono">${fmtT(r.duration_sec)} · ${r.segments} сегм.${
         r.ambiguous ? ' · <span class="errtxt">спорных ' + r.ambiguous + '</span>' : ''}</div>
-      <div style="margin-top:4px"><span class="st st-${esc(r.status)}">${esc(r.status)}</span>${linkBtn('transcript/' + r.id)}</div>
+      <div style="margin-top:4px">${stCell(r)}${linkBtn('transcript/' + r.id)}</div>
     </div>
   </div>`;
 }
@@ -457,7 +654,9 @@ function trHead(r){
       <b style="font-size:16px">${esc(recTitle(r))}</b>
       <span class="dim mono">${fmtDT(r.started_at || r.created_at)}</span>
       <span class="dim mono">${fmtT(r.duration_sec)} · ${r.segments} сегм.</span>
+      ${srcBadge(r.source)}
       ${r.ambiguous ? `<span class="badge bad">спорных ${r.ambiguous}</span>` : ''}
+      ${r.has_audio === false ? '<span class="badge bad" title="файл не найден в data/">аудио недоступно</span>' : ''}
       ${linkBtn('transcript/' + r.id)}
     </div>
     <div class="sub">${esc(r.filename)}</div>
@@ -469,8 +668,7 @@ async function applyTr(r){
   if (rid == null){                       // #transcript без id — список записей
     $('trWrap').style.display = 'none';
     $('trList').style.display = '';
-    CUR_RID = null; showHint(null);
-    try { $('trAudio').pause(); } catch (e) {}
+    CUR_RID = null; showHint(null);   // плеер в шапке не трогаем: звук не должен обрываться
     await loadTrList();
     return;
   }
@@ -499,9 +697,11 @@ async function loadSegments(rid){
   SEGS = segs; SPK = spk; CUR_RID = rid; RSUM = sum;
   CONF_BY_SEG = {};
   confs.forEach(c => { CONF_BY_SEG[String(c.segment_id)] = c.id; });
-  $('trHead').innerHTML = trHead(RSUM.find(x => x.id === rid));
-  const au = $('trAudio'), src = '/api/audio/' + rid;
-  if (!au.src || !au.src.endsWith(src)) au.src = src;
+  const rec = RSUM.find(x => x.id === rid);
+  TR_AUDIO = !rec || rec.has_audio !== false;
+  $('trHead').innerHTML = trHead(rec);
+  // подкладываем запись в общий плеер (не перебивая то, что уже играет)
+  if (TR_AUDIO) preload(recSrc(rid), recLabel(rid));
   $('segList').innerHTML = SEGS.map(segHtml).join('') ||
     '<div class="dim">сегментов нет — запись ещё не прошла конвейер</div>';
 }
@@ -542,21 +742,22 @@ function resolveRow(cid){
     linkBtn('conflicts/' + cid) + '</div>';
 }
 
+// перемотка без запуска — только если в плеере действительно эта запись
 function seekOnly(t){
-  const a = $('trAudio');
-  const go = () => { try { a.currentTime = t; } catch (e) {} };
-  if (a.readyState >= 1) go(); else a.addEventListener('loadedmetadata', go, {once: true});
+  if (PLAYER.src !== recSrc(CUR_RID)) return;
+  const go = () => { try { AU.currentTime = t; } catch (e) {} PLAYER.span = [t, null]; renderNow(); };
+  if (AU.readyState >= 1) go(); else AU.addEventListener('loadedmetadata', go, {once: true});
 }
 
 function seekPlay(t){
-  seekOnly(t);
-  $('trAudio').play().catch(() => {});
+  if (!TR_AUDIO){ showErr('аудио недоступно'); return; }
+  play({src: recSrc(CUR_RID), start: t, title: recLabel(CUR_RID)});
   $('playHint').style.display = 'none';
 }
 
 function showHint(t){
   PEND_T = t;
-  if (t == null){ $('playHint').style.display = 'none'; return; }
+  if (t == null || !TR_AUDIO){ $('playHint').style.display = 'none'; return; }
   $('playHintT').textContent = fmtT(t);
   $('playHint').style.display = '';
 }
@@ -586,81 +787,7 @@ async function resolveConflict(cid, name){
   if (TAB === 'jobs') loadJobs().catch(() => {});
 }
 
-// ---------- Голоса: общий плеер ----------
-// кнопка, с которой запущено воспроизведение: она показывает ⏸ и останавливает по клику
-let VBTN = null, VBTN_LABEL = '';
-let SPBTN = null, SPBTN_LABEL = '';   // то же для плеера сэмплов на вкладке «Спикеры»
-function markPlaying(btn){
-  releaseBtn();
-  if (!btn) return;
-  VBTN = btn; VBTN_LABEL = btn.innerHTML;
-  btn.innerHTML = btn.innerHTML.replace('▶', '⏸');
-  if (btn.innerHTML === VBTN_LABEL) btn.innerHTML = '⏸ ' + VBTN_LABEL;
-  btn.classList.add('playing');
-}
-function releaseBtn(){
-  if (VBTN){ VBTN.innerHTML = VBTN_LABEL; VBTN.classList.remove('playing'); }
-  VBTN = null; VBTN_LABEL = '';
-}
-function toggleIfSame(btn){
-  const a = $('vAudio');
-  if (VBTN === btn && !a.paused){ a.pause(); return true; }   // повторный клик = стоп
-  return false;
-}
-
-function playSpan(rid, start, end, btn){
-  if (toggleIfSame(btn)) return;
-  const a = $('vAudio'), src = '/api/audio/' + rid;
-  const fresh = !a.src || !a.src.endsWith(src);
-  VSTOP = (end != null && +end > +start) ? +end : null;
-  markPlaying(btn);
-  const go = () => { try { a.currentTime = +start; } catch (e) {} a.play().catch(() => {}); };
-  if (!fresh && a.readyState >= 1){ go(); return; }
-  if (fresh) a.src = src;
-  // без load() браузер не начнёт качать метаданные и loadedmetadata не наступит
-  a.addEventListener('loadedmetadata', go, {once: true});
-  a.load();
-}
-function playSample(sid, btn){
-  if (toggleIfSame(btn)) return;
-  const a = $('vAudio');
-  VSTOP = null;
-  markPlaying(btn);
-  a.src = '/api/speakers/sample/' + sid;
-  a.load();
-  a.play().catch(() => {});
-}
-// очередь фрагментов кластера: играем подряд, чтобы составить впечатление о голосе
-let VQUEUE = null;
-function playQueue(){
-  if (!VQUEUE || VQUEUE.idx >= VQUEUE.items.length){
-    if (VQUEUE && VQUEUE.btn){ VQUEUE.btn.innerHTML = VQUEUE.btn.innerHTML.replace('⏸', '▶'); VQUEUE.btn.classList.remove('playing'); }
-    VQUEUE = null; return;
-  }
-  const t = VQUEUE.items[VQUEUE.idx++];
-  const btn = VQUEUE.btn;
-  btn.innerHTML = `⏸ подряд ${VQUEUE.idx}/${VQUEUE.items.length}`;
-  btn.classList.add('playing');
-  const a = $('vAudio'), src = '/api/audio/' + VQUEUE.rid;
-  VSTOP = t.end_sec;
-  const go = () => { try { a.currentTime = t.start_sec; } catch (e) {} a.play().catch(() => {}); };
-  if (a.src && a.src.endsWith(src) && a.readyState >= 1) go();
-  else { a.src = src; a.addEventListener('loadedmetadata', go, {once: true}); a.load(); }
-}
-
-['pause', 'ended', 'emptied'].forEach(ev => $('vAudio').addEventListener(ev, () => {
-  if (VQUEUE){ setTimeout(playQueue, 150); return; }   // очередь: сразу следующий фрагмент
-  releaseBtn();
-}));
-['pause', 'ended', 'emptied'].forEach(ev => $('spAudio').addEventListener(ev, () => {
-  if (SPBTN){ SPBTN.innerHTML = SPBTN_LABEL; SPBTN.classList.remove('playing'); }
-  SPBTN = null; SPBTN_LABEL = '';
-}));
-$('vAudio').addEventListener('timeupdate', () => {
-  const a = $('vAudio');
-  if (VSTOP != null && a.currentTime >= VSTOP){ a.pause(); VSTOP = null; }
-});
-
+// ---------- Голоса ----------
 async function showVoices(r){
   VSEC = r.vsec || 'people';
   document.querySelectorAll('#vnav button').forEach(b => b.classList.toggle('on', b.dataset.vsec === VSEC));
@@ -700,7 +827,8 @@ async function openPerson(id, push){
 function renderPerson(){
   const p = VPERSON;
   const rows = p.samples.map(s => `<tr${s.is_active ? '' : ' class="off"'}>
-    <td>${s.has_path ? `<button class="act" data-act="vplay" data-sid="${s.id}">▶</button>` : '<span class="sub">нет файла</span>'}</td>
+    <td>${s.has_path ? `<button class="act" data-act="vplay" data-sid="${s.id}" data-who="${esc(p.name)}">▶</button>`
+      : '<button class="act" disabled title="аудио недоступно">▶</button>'}</td>
     <td class="mono">${s.duration_sec != null ? (+s.duration_sec).toFixed(1) + 'с' : '—'}</td>
     <td>${esc(s.kind)}</td>
     <td class="sub" style="word-break:break-all">${esc(s.source || '')}</td>
@@ -741,6 +869,8 @@ async function loadCandidates(rid){
 
 function renderCandidates(){
   const d = ECAND;
+  // без файла на диске слушать нечего: кнопки гасим, а не оставляем «молчащими»
+  const off = d.has_audio ? '' : ' disabled title="аудио недоступно"';
   $('enrollHint').textContent = d.has_audio ? '' : 'аудио записи недоступно — матч и эталоны не посчитать';
   $('enrollBody').innerHTML = d.groups.length ? d.groups.map((g, i) => `
     <div class="card ecard" data-i="${i}" style="width:100%">
@@ -749,29 +879,33 @@ function renderCandidates(){
         ${g.known ? '<span class="badge">есть в базе</span>' : '<span class="badge bad">не опознан</span>'}
         <span class="dim">говорил ${fmtT(g.total_sec)} · ${g.count} реплик${
           g.ambiguous_count ? ` · <span style="color:var(--red)">спорных ${g.ambiguous_count}</span>` : ''}</span>
-        <button class="act" data-act="vqueue" data-i="${i}">▶ подряд</button>
+        <button class="act" data-act="vqueue" data-i="${i}"${off}>▶ подряд</button>
       </div>
       <div class="sub" style="margin-top:4px">${g.match.length
         ? 'матч по базе: ' + g.match.map(m => `${esc(m.name)} <b style="color:${cohCol(m.cos)}">${(+m.cos).toFixed(2)}</b>`).join(' · ')
         : esc(g.match_error || 'база эталонов пуста')}</div>
       <div style="margin:8px 0">${g.top.map((t, ti) => `
         <div class="frag${t.ambiguous ? ' amb' : ''}"${ti >= 8 ? ' data-extra="1" style="display:none"' : ''}>
-          <button class="act" data-act="vspan" data-rid="${d.recording_id}" data-s="${t.start_sec}" data-e="${t.end_sec}">▶</button>
+          <button class="act" data-act="vspan" data-rid="${d.recording_id}" data-s="${t.start_sec}" data-e="${t.end_sec}"${off}>▶</button>
           <span class="t">${fmtT(t.start_sec)}</span>
           <span class="badge">${(t.end_sec - t.start_sec).toFixed(1)}с</span>
-          ${t.ambiguous ? '<span class="badge bad" title="голос не похож на этот кластер — в эталон не пойдёт">спорный</span>' : ''}
+          ${t.confidence != null ? `<span class="badge" style="color:${cohCol(t.confidence)}" title="уверенность в спикере">${(+t.confidence).toFixed(2)}</span>` : ''}
+          ${t.ambiguous ? `<span class="badge bad" title="${esc(t.reason || 'неуверенно')}">спорный</span>
+            <button class="act" data-act="econf" data-seg="${t.id}" data-i="${i}"
+              title="подтвердить: это ${esc(g.label)} — фрагмент станет эталоном">✓ это ${esc(g.label)}</button>` : ''}
           <span class="txt">${esc(t.text)}</span>
         </div>`).join('') || '<span class="dim">фрагментов нет</span>'}
         ${g.top.length > 8 ? `<button class="act" data-act="vmore" data-i="${i}">показать все ${g.top.length}</button>` : ''}</div>
       <div class="rsrow">
         <select data-role="who"><option value="">— кто это? —</option>${optList()}</select>
-        <button class="act" data-act="ewho">Это он / она</button>
+        <button class="act" data-act="ewho"
+          title="все ${g.count} реплик этого голоса в записи получат выбранное имя, а голос запомнится для будущих записей">это он / она — применить ко всем ${g.count}</button>
         <span class="dim">|</span>
         <input data-role="nname" placeholder="новый человек">
         <input data-role="nalias" placeholder="алиасы через запятую" style="width:160px">
-        <button class="act" data-act="enew">Это новый человек</button>
+        <button class="act" data-act="enew" title="завести человека и применить ко всем ${g.count} репликам">это новый человек</button>
         <span class="dim">|</span>
-        <button class="act" data-act="etrash">Мусор/фон</button>
+        <button class="act" data-act="etrash" title="пометить все ${g.count} реплик как фон; эталон не создаётся">мусор / фон</button>
       </div>
       <div class="eres sub" style="margin-top:8px"></div>
     </div>`).join('') : '<div class="dim">в этой записи нет сегментов</div>';
@@ -822,7 +956,8 @@ async function loadSugg(){
   $('suggBody').innerHTML = '<div class="dim">загрузка…</div>';
   let d;
   try { d = await api('/api/enroll/suggestions'); } catch (e) { fail($('suggBody'), e); return; }
-  const span = s => `<button class="act" data-act="vspan" data-rid="${s.recording_id}" data-s="${s.start_sec}" data-e="${s.end_sec}">▶</button>`;
+  const span = s => `<button class="act" data-act="vspan" data-rid="${s.recording_id}" data-s="${s.start_sec}" data-e="${s.end_sec}"${
+    s.has_audio === false ? ' disabled title="аудио недоступно"' : ''}>▶</button>`;
   const head = s => `<div class="sub">запись #${s.recording_id} «${esc(s.rec_title)}» · ${fmtT(s.start_sec)}–${fmtT(s.end_sec)}` +
     ` · ${(s.end_sec - s.start_sec).toFixed(1)}с${s.confidence != null ? ' · cos ' + (+s.confidence).toFixed(2) : ''}</div>`;
 
@@ -831,7 +966,8 @@ async function loadSugg(){
       <div style="margin:4px 0"><b style="color:${spkCol(s.speaker_name)}">${esc(s.speaker_name)}</b>: «${esc(s.text)}»</div>
       <div class="rsrow">${span(s)}
         <select data-role="who"><option value="">— кто это? —</option>${optList()}</select>
-        <button class="act" data-act="sname" data-rid="${s.recording_id}" data-label="${esc(s.speaker_name)}" data-s="${s.start_sec}" data-e="${s.end_sec}">назвать кластер + эталон</button>
+        <button class="act" data-act="sname" data-rid="${s.recording_id}" data-label="${esc(s.speaker_name)}" data-s="${s.start_sec}" data-e="${s.end_sec}"
+          title="переименует ВСЕ реплики ${esc(s.speaker_name)} в этой записи и запомнит голос для будущих записей">применить ко всем «${esc(s.speaker_name)}» в записи</button>
         <button class="act" data-act="goto" data-h="voices/enroll/${s.recording_id}">разметить запись →</button>
         ${linkBtn('transcript/' + s.recording_id + '/seg/' + s.id)}</div>
       <div class="eres sub" style="margin-top:6px"></div></div>`).join('');
@@ -849,7 +985,8 @@ async function loadSugg(){
       <div style="margin:4px 0"><b style="color:${spkCol(s.speaker_name)}">${esc(s.speaker_name)}</b> ·
         coherence <b style="color:${cohCol(s.coherence)}">${cohTxt(s.coherence)}</b></div>
       <div class="rsrow">
-        ${s.has_path ? `<button class="act" data-act="vplay" data-sid="${s.id}">▶</button>` : '<span class="sub">нет файла</span>'}
+        ${s.has_path ? `<button class="act" data-act="vplay" data-sid="${s.id}" data-who="${esc(s.speaker_name)}">▶</button>`
+          : '<button class="act" disabled title="аудио недоступно">▶</button>'}
         <button class="act" data-act="sexcl" data-sid="${s.id}">исключить из эталона</button></div></div>`).join('');
 
   $('suggBody').innerHTML =
@@ -912,7 +1049,7 @@ function usageChart(days, budget){
     return `<rect x="${(L + i*bw + 2).toFixed(1)}" y="${(H - B - h).toFixed(1)}"
         width="${Math.max(bw - 4, 1).toFixed(1)}" height="${h.toFixed(1)}" rx="2"
         fill="${v > 0 ? (over ? 'var(--red)' : 'var(--acc)') : 'var(--border)'}"
-        ><title>${esc(d.day)} — ${fmtUsd(v)} (${d.calls} вызовов)</title></rect>`;
+        ><title>${esc(d.day)} — ${fmtUsd(v)}, ${plural(d.calls, 'вызов', 'вызова', 'вызовов')}</title></rect>`;
   }).join('');
   const labels = days.map((d, i) => (i % 2 === 0 || i === days.length - 1)
     ? `<text x="${(L + i*bw + bw/2).toFixed(1)}" y="${H - 8}" text-anchor="middle"
@@ -948,7 +1085,7 @@ async function loadUsage(){
     <div class="card"><div class="dim">за 7 дней</div><div class="v">${fmtUsd(d.week_usd)}</div>
       <div class="sub">≈ ${fmtUsd(d.week_usd / 7)} в день</div></div>
     <div class="card"><div class="dim">за всё время</div><div class="v">${fmtUsd(d.total_usd)}</div>
-      <div class="sub">${d.calls} вызовов${d.first_day ? ' с ' + fmtDay(d.first_day) : ''}</div></div>
+      <div class="sub">${plural(d.calls, 'вызов', 'вызова', 'вызовов')}${d.first_day ? ' с ' + fmtDay(d.first_day) : ''}</div></div>
   </div>`;
 
   const mrows = d.by_model.map(m => `<tr>
@@ -1005,7 +1142,7 @@ async function loadSp(){
 function spCard(p){
   const counts = Object.entries(p.sample_counts || {}).map(([k, v]) => `${esc(k)}: ${v}`).join(' · ') || 'нет сэмплов';
   const btns = (p.samples || []).filter(s => s.has_path).map(s =>
-    `<button class="act${s.is_active ? '' : ' off'}" data-act="smp" data-sid="${s.id}">▶ ${esc(s.kind)}${s.duration_sec ? ' ' + (+s.duration_sec).toFixed(1) + 'с' : ''}</button>`).join('');
+    `<button class="act${s.is_active ? '' : ' off'}" data-act="vplay" data-sid="${s.id}" data-who="${esc(p.name)}">▶ ${esc(s.kind)}${s.duration_sec ? ' ' + (+s.duration_sec).toFixed(1) + 'с' : ''}</button>`).join('');
   return `<div class="card" style="min-width:260px">
     <div><b style="color:${spkCol(p.name)}">${esc(p.name)}</b> ${linkBtn('voices/' + p.id)}</div>
     ${p.aliases && p.aliases.length ? `<div class="dim">${esc(p.aliases.join(', '))}</div>` : ''}
@@ -1025,7 +1162,9 @@ function confCard(c){
     <div style="margin:6px 0">«${esc(c.text)}»</div>
     ${top ? `<div class="dim">top: ${top}${d.cluster_default ? ' · cluster: ' + esc(d.cluster_default.name) : ''}</div>` : ''}
     <div class="rsrow">
-      <button class="act" data-act="goto" data-h="transcript/${c.recording_id}/seg/${c.segment_id}">▶ слушать</button>
+      <button class="act" data-act="vspan" data-rid="${c.recording_id}" data-s="${c.start_sec}" data-e="${c.end_sec}"${
+        c.has_audio === false ? ' disabled title="аудио недоступно"' : ''}>▶ слушать</button>
+      <button class="lnk" data-act="goto" data-h="transcript/${c.recording_id}/seg/${c.segment_id}" title="открыть в транскрипте">↗</button>
       ${SPK.map((p, n) => `<button class="act" data-act="rs" data-cid="${c.id}" data-n="${n}" style="color:${spkCol(p.name)}">${esc(p.name)}</button>`).join('')}
       <input placeholder="новое имя"><button class="act" data-act="rsnew" data-cid="${c.id}">OK</button>
     </div>
@@ -1058,28 +1197,45 @@ document.addEventListener('click', async e => {
         const v = (inp && inp.value || '').trim();
         if (v) await resolveConflict(+b.dataset.cid, v);
       }
-      else if (a === 'smp'){
-        const au = $('spAudio');
-        if (SPBTN === b && !au.paused){ au.pause(); return; }
-        if (SPBTN){ SPBTN.innerHTML = SPBTN_LABEL; SPBTN.classList.remove('playing'); }
-        SPBTN = b; SPBTN_LABEL = b.innerHTML;
-        b.innerHTML = b.innerHTML.replace('▶', '⏸'); b.classList.add('playing');
-        au.src = '/api/speakers/sample/' + b.dataset.sid; au.load(); au.play().catch(() => {});
-      }
+      else if (a === 'pstop') stopAll();
       else if (a === 'playat'){ if (PEND_T != null) seekPlay(PEND_T); }
       else if (a === 'person') await openPerson(+b.dataset.id, true);
-      else if (a === 'vplay') playSample(b.dataset.sid, b);
-      else if (a === 'vspan'){ VQUEUE = null; playSpan(b.dataset.rid, b.dataset.s, b.dataset.e, b); }
+      else if (a === 'vplay') playSample(b.dataset.sid, b, b.dataset.who);
+      else if (a === 'vspan') playSpan(b.dataset.rid, b.dataset.s, b.dataset.e, b);
+      else if (a === 'econf'){
+        // подтверждение спорного фрагмента: он становится эталоном голоса
+        const g = ECAND.groups[+b.dataset.i];
+        const old = b.innerHTML;
+        b.disabled = true; b.innerHTML = 'добавляю…';
+        try {
+          const r = await api('/api/enroll/confirm_segment', {method:'POST',
+            body:{segment_id: +b.dataset.seg, name: g.label}});
+          b.innerHTML = '✓ в эталонах';
+          b.classList.remove('act'); b.style.color = 'var(--green)';
+          const row = b.closest('.frag');
+          if (row){ row.classList.remove('amb'); const bad = row.querySelector('.badge.bad'); if (bad) bad.remove(); }
+          const res = card ? card.querySelector('.eres') : null;
+          if (res){
+            res.style.color = 'var(--green)';
+            res.textContent = `эталонов у ${g.label}: ${r.samples_total}` +
+              (r.coherence != null ? ` · когерентность нового ${(+r.coherence).toFixed(2)}` : '') +
+              ` · матч: ${(r.match || []).map(m => m.name + ' ' + (+m.cos).toFixed(2)).join(' · ')}`;
+          }
+          loadPeople().catch(() => {});
+        } catch (e){
+          b.disabled = false; b.innerHTML = old;
+          alert('не получилось: ' + ((e && e.message) || e));
+        }
+      }
       else if (a === 'vmore'){
         b.closest('.ecard').querySelectorAll('[data-extra]').forEach(el => el.style.display = '');
         b.remove();
       }
       else if (a === 'vqueue'){
         const g = ECAND.groups[+b.dataset.i];
-        if (VQUEUE && VQUEUE.btn === b){ VQUEUE = null; $('vAudio').pause(); return; }
-        VQUEUE = {items: g.top.filter(t => !t.ambiguous).slice(0, 12), idx: 0,
-                  rid: ECAND.recording_id, btn: b};
-        playQueue();
+        if (PLAYER.queue && PLAYER.queue.btn === b){ stopAll(); return; }
+        startQueue(g.top.filter(t => !t.ambiguous).slice(0, 12),
+                   recSrc(ECAND.recording_id), recLabel(ECAND.recording_id) + ' · ' + g.label, b);
       }
       else if (a === 'vtog'){
         const res = await api('/api/speakers/sample/' + b.dataset.sid + '/toggle', {method:'POST'});
@@ -1140,7 +1296,7 @@ $('enrollSel').addEventListener('change', async () => {
 
 setInterval(() => { if (TAB === 'jobs' && !ROUTING) loadJobs().catch(() => {}); }, 5000);
 
-function boot(){ LAST_HASH = curHash(); loadCosts().catch(() => {}); route(LAST_HASH, true).catch(() => {}); }
+function boot(){ LAST_HASH = curHash(); renderNow(); loadCosts().catch(() => {}); route(LAST_HASH, true).catch(() => {}); }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 </script>
 </body>

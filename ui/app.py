@@ -1,4 +1,5 @@
 """cosmolet UI — FastAPI поверх Postgres: статика, API, аудио с HTTP Range, разметка голосов."""
+import json
 import mimetypes
 import os
 import re
@@ -146,17 +147,42 @@ def serve_range(path, request):
 
 @app.get("/")
 def index():
-    return FileResponse(os.path.join(BASE_DIR, "static", "index.html"))
+    # интерфейс меняется постоянно; закэшированная страница со старыми обработчиками
+    # выглядит как «кнопки не работают» — поэтому явный запрет кэширования
+    return FileResponse(os.path.join(BASE_DIR, "static", "index.html"),
+                        headers={"Cache-Control": "no-store, must-revalidate"})
+
+
+# этап скачивания записи из облака идёт ДО черновика — он и в конвейере первый
+STAGE_ORDER = "CASE stage WHEN 'download' THEN 0 WHEN 'draft' THEN 1 WHEN 'quality' THEN 2 " \
+              "WHEN 'resolve' THEN 3 WHEN 'store' THEN 4 ELSE 5 END"
+
+# незавершённое скачивание: запись уже в базе, но файла ещё нет — это не поломка
+DOWNLOADING_SQL = """SELECT recording_id, count(*) AS n FROM jobs
+                      WHERE stage = 'download' AND status = 'running'
+                      GROUP BY recording_id"""
+
+
+def with_audio(rows, drop=True):
+    """Добавить строкам has_audio: аудиофайл записи реально лежит на диске.
+
+    В БД путь может остаться, а файл быть удалён (или ещё не скачан) — UI должен
+    гасить кнопки воспроизведения, а не молча ничего не делать."""
+    for r in rows:
+        p = r.pop("audio_path", None) if drop else r.get("audio_path")
+        r["has_audio"] = safe_data_path(p) is not None
+    return rows
 
 
 @app.get("/api/recordings")
 def recordings():
-    return q("""
-        SELECT r.id, r.filename, r.title, r.status, r.duration_sec, r.size_bytes,
-               r.started_at, r.created_at,
+    return with_audio(q(f"""
+        SELECT r.id, r.filename, r.title, r.status, r.source, r.audio_path,
+               r.duration_sec, r.size_bytes, r.started_at, r.created_at,
                coalesce(j.cost, 0)  AS cost_usd,
                coalesce(sg.n, 0)    AS segments,
-               coalesce(cf.n, 0)    AS open_conflicts
+               coalesce(cf.n, 0)    AS open_conflicts,
+               coalesce(dl.n, 0) > 0 AS downloading
         FROM recordings r
         LEFT JOIN (SELECT recording_id, sum(cost_usd) AS cost FROM jobs GROUP BY recording_id) j
                ON j.recording_id = r.id
@@ -166,7 +192,9 @@ def recordings():
                      FROM conflicts c JOIN segments s ON s.id = c.segment_id
                     WHERE c.status = 'open' GROUP BY s.recording_id) cf
                ON cf.recording_id = r.id
-        ORDER BY r.created_at DESC, r.id DESC""")
+        LEFT JOIN ({DOWNLOADING_SQL}) dl
+               ON dl.recording_id = r.id
+        ORDER BY r.created_at DESC, r.id DESC"""))
 
 
 @app.get("/api/recordings/summary")
@@ -175,14 +203,15 @@ def recordings_summary():
 
     Агрегаты по спикерам приходят одним запросом (json_agg по сгруппированным
     сегментам), а не запросом на запись — список может быть длинным."""
-    return q("""
-        SELECT r.id, r.filename, r.title, r.status, r.duration_sec, r.size_bytes,
-               r.started_at, r.created_at,
+    return with_audio(q(f"""
+        SELECT r.id, r.filename, r.title, r.status, r.source, r.audio_path,
+               r.duration_sec, r.size_bytes, r.started_at, r.created_at,
                coalesce(sg.n, 0)          AS segments,
                coalesce(sg.amb, 0)        AS ambiguous,
                coalesce(sg.speech_sec, 0) AS speech_sec,
                coalesce(j.cost, 0)        AS cost_usd,
                coalesce(cf.n, 0)          AS open_conflicts,
+               coalesce(dl.n, 0) > 0      AS downloading,
                coalesce(sp.speakers, '[]'::json) AS speakers
         FROM recordings r
         LEFT JOIN (SELECT recording_id, count(*) AS n,
@@ -205,7 +234,9 @@ def recordings_summary():
                              FROM segments GROUP BY 1, 2) t
                     GROUP BY recording_id) sp
                ON sp.recording_id = r.id
-        ORDER BY r.created_at DESC, r.id DESC""")
+        LEFT JOIN ({DOWNLOADING_SQL}) dl
+               ON dl.recording_id = r.id
+        ORDER BY r.created_at DESC, r.id DESC"""))
 
 
 @app.get("/api/recordings/{rec_id}")
@@ -213,11 +244,11 @@ def recording_detail(rec_id: int):
     rec = q1("SELECT * FROM recordings WHERE id = %s", (rec_id,))
     if rec is None:
         raise HTTPException(404, "recording not found")
-    rec["jobs"] = q("""
+    with_audio([rec], drop=False)   # audio_path нужен в карточке, флаг — кнопкам
+    rec["jobs"] = q(f"""
         SELECT id, stage, status, started_at, finished_at, cost_usd, error, artifact_path, meta
         FROM jobs WHERE recording_id = %s
-        ORDER BY CASE stage WHEN 'draft' THEN 1 WHEN 'quality' THEN 2
-                            WHEN 'resolve' THEN 3 WHEN 'store' THEN 4 ELSE 5 END, id""", (rec_id,))
+        ORDER BY {STAGE_ORDER}, id""", (rec_id,))
     return rec
 
 
@@ -405,9 +436,20 @@ def enroll_candidates(recording_id: int):
     out = []
     for label, items in groups.items():
         items.sort(key=lambda x: (x["end_sec"] - x["start_sec"]), reverse=True)
-        # показываем много фрагментов: по пяти обрывкам голос не опознать
-        top = [{k: s[k] for k in ("id", "start_sec", "end_sec", "text", "confidence", "ambiguous")}
-               for s in items[:25]]
+        # показываем много фрагментов: по пяти обрывкам голос не опознать.
+        # reason важен человеку: top2_close («похож и на другого») и low_confidence —
+        # это разные ситуации, и разбираются они по-разному
+        top = []
+        for s in items[:25]:
+            d = s.get("detail") or {}
+            if isinstance(d, str):
+                try:
+                    d = json.loads(d)
+                except Exception:
+                    d = {}
+            top.append({k: s[k] for k in ("id", "start_sec", "end_sec", "text",
+                                          "confidence", "ambiguous")}
+                       | {"reason": d.get("reason")})
         # эталон и матч считаем по самому длинному НЕспорному фрагменту: спорный может
         # оказаться чужой репликой, попавшей в кластер по ошибке провайдера
         clean = [s for s in items if not s["ambiguous"]] or items
@@ -494,6 +536,46 @@ def enroll(body: dict):
     }
 
 
+@app.post("/api/enroll/confirm_segment")
+def confirm_segment(body: dict):
+    """Подтвердить конкретную (обычно спорную) реплику: сделать её эталоном голоса.
+
+    Спорные реплики — самый ценный материал: голос там звучит непривычно (эмоция,
+    громкость, расстояние до микрофона), и именно они раздвигают похожих людей.
+    Подтверждение снимает пометку спорности, закрывает конфликт и кладёт фрагмент
+    в эталоны человека.
+    """
+    b = body or {}
+    seg_id = b.get("segment_id")
+    name = str(b.get("name", "")).strip()
+    if seg_id is None or not name:
+        raise HTTPException(400, "segment_id and name are required")
+    seg = q1("""SELECT s.id, s.recording_id, s.start_sec, s.end_sec, r.audio_path
+                FROM segments s JOIN recordings r ON r.id = s.recording_id
+                WHERE s.id = %s""", (int(seg_id),))
+    if seg is None:
+        raise HTTPException(404, "segment not found")
+
+    res = enroll({"recording_id": seg["recording_id"], "start_sec": seg["start_sec"],
+                  "end_sec": seg["end_sec"], "speaker_name": name})
+
+    def run(c):
+        with c.transaction():
+            c.execute("""
+                UPDATE segments
+                SET speaker_name = %s,
+                    speaker_id = (SELECT id FROM speakers WHERE name = %s),
+                    ambiguous = false,
+                    detail = coalesce(detail, '{}'::jsonb)
+                             || jsonb_build_object('resolution', %s::text)
+                WHERE id = %s""", (name, name, f"user:{name} (подтверждён эталоном)", seg["id"]))
+            c.execute("""UPDATE conflicts SET status='resolved', resolved_name=%s,
+                         resolved_by='user', resolved_at=now()
+                         WHERE segment_id = %s AND status='open'""", (name, seg["id"]))
+    _run(run)
+    return {**res, "segment_id": seg["id"], "confirmed": True}
+
+
 @app.post("/api/enroll/rename_cluster")
 def rename_cluster(body: dict):
     b = body or {}
@@ -530,7 +612,7 @@ def suggestions():
         SELECT * FROM (
           SELECT DISTINCT ON (s.recording_id, s.speaker_name)
                  s.id, s.recording_id, s.start_sec, s.end_sec, s.text, s.speaker_name,
-                 s.confidence, coalesce(r.title, r.filename) AS rec_title
+                 s.confidence, coalesce(r.title, r.filename) AS rec_title, r.audio_path
           FROM segments s JOIN recordings r ON r.id = s.recording_id
           WHERE s.end_sec - s.start_sec >= 6 AND s.speaker_name ~* '{ANON_RE}'
           ORDER BY s.recording_id, s.speaker_name, (s.end_sec - s.start_sec) DESC
@@ -539,7 +621,7 @@ def suggestions():
         SELECT * FROM (
           SELECT DISTINCT ON (s.recording_id, s.speaker_name)
                  s.id, s.recording_id, s.start_sec, s.end_sec, s.text, s.speaker_name,
-                 s.confidence, coalesce(r.title, r.filename) AS rec_title
+                 s.confidence, coalesce(r.title, r.filename) AS rec_title, r.audio_path
           FROM segments s JOIN recordings r ON r.id = s.recording_id
           WHERE s.confidence BETWEEN 0.5 AND 0.75
             AND s.speaker_name IN (SELECT name FROM speakers)
@@ -552,7 +634,7 @@ def suggestions():
            for s in samples
            if s["is_active"] and s["coherence"] is not None and s["coherence"] < 0.5]
     bad.sort(key=lambda s: s["coherence"])
-    return {"unnamed": unnamed, "enrich": enrich, "bad_samples": bad}
+    return {"unnamed": with_audio(unnamed), "enrich": with_audio(enrich), "bad_samples": bad}
 
 
 @app.get("/api/speakers/sample/{sample_id}")
@@ -568,14 +650,15 @@ def speaker_sample(sample_id: int, request: Request):
 
 @app.get("/api/conflicts")
 def conflicts(status: str = "open"):
-    return q("""
+    return with_audio(q("""
         SELECT c.id, c.segment_id, c.reason, c.status, c.judge_verdict,
                c.resolved_name, c.resolved_by, c.created_at, c.resolved_at,
                s.recording_id, s.start_sec, s.end_sec, s.text,
-               s.speaker_name, s.confidence, s.detail
+               s.speaker_name, s.confidence, s.detail, r.audio_path
         FROM conflicts c JOIN segments s ON s.id = c.segment_id
+                         JOIN recordings r ON r.id = s.recording_id
         WHERE c.status = %s
-        ORDER BY c.id""", (status,))
+        ORDER BY c.id""", (status,)))
 
 
 @app.post("/api/conflicts/{conflict_id}/resolve")
@@ -590,11 +673,16 @@ def resolve_conflict(conflict_id: int, body: dict):
                             (conflict_id,)).fetchone()
             if row is None:
                 return None
+            # %s::text обязателен: без явного типа Postgres не выводит тип аргумента
+            # jsonb_build_object и падает с IndeterminateDatatype
             c.execute("""
                 UPDATE segments
-                SET speaker_name = %s, ambiguous = true,
-                    detail = coalesce(detail, '{}'::jsonb) || jsonb_build_object('resolution', %s)
-                WHERE id = %s""", (name, "user:" + name, row["segment_id"]))
+                SET speaker_name = %s,
+                    speaker_id = (SELECT id FROM speakers WHERE name = %s),
+                    ambiguous = true,
+                    detail = coalesce(detail, '{}'::jsonb)
+                             || jsonb_build_object('resolution', %s::text)
+                WHERE id = %s""", (name, name, "user:" + name, row["segment_id"]))
             c.execute("""
                 UPDATE conflicts
                 SET status = 'resolved', resolved_name = %s, resolved_by = 'user',
@@ -690,10 +778,9 @@ def usage():
         WITH c AS (SELECT model, kind, recording_id, sum(usd) AS usd, count(*) AS calls
                      FROM costs GROUP BY 1, 2, 3),
              d AS (SELECT r.id, r.duration_sec::numeric AS audio_sec,
-                          (SELECT max((j.meta->>'speech_sec')::numeric)
+                          (SELECT max(nullif(j.meta->>'speech_sec', '')::numeric)
                              FROM jobs j
-                            WHERE j.recording_id = r.id AND j.stage = 'draft'
-                              AND j.meta ? 'speech_sec') AS speech_sec
+                            WHERE j.recording_id = r.id AND j.stage = 'draft') AS speech_sec
                      FROM recordings r)
         SELECT c.model, c.kind,
                sum(c.usd)                     AS usd,
@@ -754,7 +841,8 @@ def usage():
     daily = q("""
         SELECT to_char(g.d, 'YYYY-MM-DD') AS day,
                coalesce(sum(c.usd), 0) AS usd, count(c.id) AS calls
-          FROM generate_series(current_date - 13, current_date, interval '1 day') g(d)
+          FROM generate_series((current_date - 13)::timestamptz, current_date::timestamptz,
+                               interval '1 day') g(d)
           LEFT JOIN costs c ON c.day = g.d::date
          GROUP BY g.d ORDER BY g.d""")
 
