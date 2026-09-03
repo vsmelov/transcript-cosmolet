@@ -1511,10 +1511,16 @@ async function loadFast(rid){
         style="border-color:${cohCol(x.cos)}"
         title="Отдать все ${g.count} реплик человеку «${esc(x.name)}» и добавить ядро в его эталоны">
         ${esc(x.name)} <b style="color:${cohCol(x.cos)}">${(+x.cos).toFixed(2)}</b></button>`).join(' ');
-    const core = (g.core || []).map(c => `<button class="act" data-act="cplay" data-rid="${rid}"
-        data-start="${c.start_sec}" data-end="${c.end_sec}" style="font-weight:600"
-        title="${esc(c.text)}">▶ ${(c.end_sec - c.start_sec).toFixed(1)}с · типичность ${c.typicality}</button>`).join(' ');
-    // пограничные — те, где система сомневалась: их стоит глянуть перед приёмкой
+    const frag = (c, kind) => `<button class="act" data-act="cplay" data-rid="${rid}"
+        data-start="${c.start_sec}" data-end="${c.end_sec}"
+        style="${kind === 'core' ? 'font-weight:600' : 'border-color:var(--yellow)'}"
+        title="${esc(c.text)}">▶ ${(c.end_sec - c.start_sec).toFixed(1)}с · ${c.typicality}</button>`;
+    const core = (g.core || []).map(c => frag(c, 'core')).join(' ');
+    // Аутсайдеры — реплики, дальше всех от центроида кластера. Если диаризация
+    // затащила сюда чужой голос, он всплывёт именно здесь, поэтому слушать нужно
+    // и их: ядро отвечает «кто это», аутсайдеры — «всё ли тут свои».
+    const outs = (g.outliers || []).map(c => frag(c, 'out')).join(' ');
+    // спорные — отдельный список: это пометка этапа опознания, а не мера типичности
     const edge = (g.top || []).filter(t => t.ambiguous).slice(0, 4).map(t => `
       <div class="prow" style="align-items:baseline">
         <button class="act" data-act="cplay" data-rid="${rid}" data-start="${t.start_sec}"
@@ -1528,7 +1534,10 @@ async function loadFast(rid){
         <span class="dim">${(g.total_sec/60).toFixed(1)} мин · ${g.count} реплик
           ${g.ambiguous_count ? `· спорных ${g.ambiguous_count}` : ''}</span>
       </div>
-      <div style="margin-top:6px">${core || '<span class="dim">ядро не выделено (нет векторов)</span>'}</div>
+      <div class="sub" style="margin-top:6px">ядро — так этот голос звучит обычно:</div>
+      <div style="margin-top:2px">${core || '<span class="dim">ядро не выделено (нет векторов)</span>'}</div>
+      ${outs ? `<div class="sub" style="margin-top:6px">дальше всех от ядра — если чужое затесалось,
+        оно здесь:</div><div style="margin-top:2px">${outs}</div>` : ''}
       <div class="rsrow" style="margin-top:8px">
         ${named ? `<button class="act" data-act="fok" data-i="${i}"
             title="Подтвердить: это ${esc(g.label)}. Ядро уйдёт в эталоны, спорные пометки снимутся.">
@@ -1540,8 +1549,8 @@ async function loadFast(rid){
         <button class="act" data-act="ftrash" data-i="${i}"
           title="Весь кластер — шум или фон. Эталоны не создаются.">мусор</button>
       </div>
-      ${edge ? `<div class="sub" style="margin-top:8px">спорные внутри кластера — послушайте,
-        если чужое, разберите в подробном разборе:${edge}</div>` : ''}
+      ${edge ? `<div class="sub" style="margin-top:8px">спорные реплики кластера
+        (разобрать поштучно можно в подробном разборе):${edge}</div>` : ''}
       <div class="eres sub" style="margin-top:6px"></div>
     </div>`;
   }).join('') || '<div class="dim">в этой записи нет заметных кластеров</div>';

@@ -737,7 +737,14 @@ def enroll_candidates(recording_id: int):
         # этого голоса. Именно они годятся в эталоны, тогда как «самый длинный
         # фрагмент» запросто оказывается длинным из-за шума или чужой вставки.
         # Считается по сохранённым векторам, без аудио и без единого ffmpeg.
-        core, cent = [], None
+        # ЯДРО и АУТСАЙДЕРЫ кластера. Ядро — реплики, ближайшие к центроиду: самые
+        # типичные для этого голоса, они и годятся в эталоны («самый длинный
+        # фрагмент» запросто длинный из-за шума или чужой вставки). Аутсайдеры —
+        # наоборот, самые далёкие: если чужая реплика попала в кластер по ошибке
+        # диаризации, она окажется именно здесь. Послушав то и другое, человек
+        # проверяет кластер целиком: кто это и не затесалось ли постороннее.
+        # Всё считается по сохранённым векторам — без аудио и без ffmpeg.
+        core, outliers, cent = [], [], None
         vecs = [(x, np.array(vec_by_id[x["id"]], dtype=np.float64))
                 for x in items if x["id"] in vec_by_id]
         if vecs:
@@ -745,16 +752,26 @@ def enroll_candidates(recording_id: int):
             c = M.mean(axis=0)
             cent = c / (np.linalg.norm(c) or 1)
             sims = M @ cent
-            order = np.argsort(-sims)
-            for i in order:
-                seg = vecs[int(i)][0]
-                if seg["end_sec"] - seg["start_sec"] < 2.0:
-                    continue          # короткий эталон только смазывает центроид
-                core.append({"id": seg["id"], "start_sec": seg["start_sec"],
-                             "end_sec": seg["end_sec"], "text": (seg["text"] or "")[:120],
-                             "typicality": round(float(sims[int(i)]), 3)})
-                if len(core) >= 3:
-                    break
+            order = list(np.argsort(-sims))
+
+            def pick(indexes, min_sec, limit):
+                out = []
+                for i in indexes:
+                    seg = vecs[int(i)][0]
+                    if seg["end_sec"] - seg["start_sec"] < min_sec:
+                        continue
+                    out.append({"id": seg["id"], "start_sec": seg["start_sec"],
+                                "end_sec": seg["end_sec"], "text": (seg["text"] or "")[:140],
+                                "typicality": round(float(sims[int(i)]), 3),
+                                "ambiguous": bool(seg["ambiguous"])})
+                    if len(out) >= limit:
+                        break
+                return out
+
+            core = pick(order, 2.0, 5)
+            core_ids = {c0["id"] for c0 in core}
+            # порог короче: аутсайдеры нужны для прослушивания, а не для эталонов
+            outliers = [o for o in pick(reversed(order), 1.2, 5) if o["id"] not in core_ids]
 
         # Матч — по ЦЕНТРОИДУ кластера, а не по одной реплике: усреднение по всем
         # репликам заметно устойчивее. Одиночный фрагмент давал заниженную близость
@@ -782,7 +799,8 @@ def enroll_candidates(recording_id: int):
             # именно этот фрагмент уйдёт в эталон при подтверждении (самый длинный чистый)
             "enroll_span": {"id": best["id"], "start_sec": best["start_sec"],
                             "end_sec": best["end_sec"]},
-            "core": core,                    # ядро: типичные реплики, кандидаты в эталоны
+            "core": core,            # типичные реплики — кандидаты в эталоны
+            "outliers": outliers,    # наименее типичные — здесь всплывает чужое
             "ambiguous_count": sum(1 for s in items if s["ambiguous"]),
             # уже разобранные человеком — чтобы в заголовке кластера было видно прогресс
             "confirmed_count": sum(1 for s in items if as_dict(s["detail"]).get("resolution")),
