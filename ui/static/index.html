@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>cosmolet</title>
 <style>
-:root{--bg:#0f1115;--panel:#161a22;--panel2:#1c2130;--border:#252b3b;--text:#e6e6e6;--dim:#8891a7;--acc:#7aa2f7;--red:#f7768e;--green:#9ece6a;--yellow:#e0af68}
+:root{--bg:#0f1115;--panel:#161a22;--panel2:#1c2130;--border:#252b3b;--text:#e6e6e6;--dim:#8891a7;--acc:#7aa2f7;--red:#f7768e;--green:#9ece6a;--yellow:#e0af68;--hl:#1b2540}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,"Segoe UI",Roboto,sans-serif}
 header{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);z-index:5}
@@ -26,6 +26,9 @@ tr[data-act]:hover td{background:var(--panel)}
 .st-new{color:var(--acc)}.st-processing,.st-running{color:var(--yellow)}.st-done{color:var(--green)}.st-failed{color:var(--red)}.st-pending,.st-skipped{color:var(--dim)}
 button.act{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:3px 10px;cursor:pointer;font:inherit;font-size:12px}
 button.act:hover{border-color:var(--acc)}
+button.lnk{background:none;border:none;color:var(--dim);cursor:pointer;font:inherit;font-size:12px;padding:0 4px;flex:none}
+button.lnk:hover{color:var(--acc)}
+button.lnk.ok{color:var(--green)}
 input{background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:3px 8px;font:inherit;font-size:12px;width:130px}
 select{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font:inherit;max-width:100%}
 audio{width:100%;margin:10px 0;display:block}
@@ -33,16 +36,18 @@ a{color:var(--acc)}
 .dim{color:var(--dim)}
 .errtxt{color:var(--red)}
 .mono{font-variant-numeric:tabular-nums}
+.sub{font-size:11px;color:var(--dim)}
 .cards{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0}
 .card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:12px 16px;min-width:130px}
 .card .v{font-size:20px;color:var(--acc);font-variant-numeric:tabular-nums}
 .pipe{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin:6px 0}
 .stage{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;min-width:170px;font-size:12px}
 .arr{align-self:center;color:var(--dim)}
-.seg{padding:5px 10px;border:1px solid transparent;border-radius:6px;cursor:pointer;display:flex;gap:10px;align-items:baseline}
+.seg{padding:5px 10px;border:1px solid transparent;border-radius:6px;cursor:pointer;display:flex;gap:10px;align-items:baseline;transition:background .4s,box-shadow .4s,border-color .4s}
 .seg:hover{background:var(--panel)}
 .seg.amb{border-color:var(--red)}
-.seg .t{color:var(--dim);font-variant-numeric:tabular-nums;flex:none}
+.seg .t,.frag .t{color:var(--dim);font-variant-numeric:tabular-nums;flex:none}
+.frag{display:flex;gap:10px;align-items:baseline;padding:3px 0}
 .spk{font-weight:600;flex:none}
 .badge{font-size:11px;border:1px solid var(--border);border-radius:8px;padding:0 6px;color:var(--dim);flex:none;white-space:nowrap}
 .badge.bad{color:var(--red);border-color:var(--red)}
@@ -50,6 +55,15 @@ a{color:var(--acc)}
 .pan{margin:2px 0 10px 78px;padding:10px;background:var(--panel);border:1px solid var(--border);border-radius:6px;font-size:13px}
 .rsrow{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:8px}
 .cand span{margin-right:12px}
+.hl{border-color:var(--acc)!important;background:var(--hl)!important;box-shadow:0 0 0 2px var(--acc)}
+.card.hl,.seg.hl{transition:background .4s,box-shadow .4s,border-color .4s}
+tr.hl td{background:var(--hl);box-shadow:inset 0 1px 0 var(--acc),inset 0 -1px 0 var(--acc)}
+.subnav{display:flex;gap:4px;align-items:center;margin-bottom:6px}
+.subnav button{background:none;border:1px solid transparent;color:var(--dim);padding:4px 10px;border-radius:6px;cursor:pointer;font:inherit;font-size:13px}
+.subnav button.on{color:var(--text);background:var(--panel);border-color:var(--border)}
+.pitem{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px;cursor:pointer}
+.pitem:hover,.pitem.on{border-color:var(--acc)}
+.off{opacity:.45}
 </style>
 </head>
 <body>
@@ -58,6 +72,7 @@ a{color:var(--acc)}
   <nav>
     <button data-tab="jobs" class="on">Jobs</button>
     <button data-tab="tr">Транскрипт</button>
+    <button data-tab="voices">Голоса</button>
     <button data-tab="disk">Диск</button>
     <button data-tab="sp">Спикеры</button>
   </nav>
@@ -67,8 +82,8 @@ a{color:var(--acc)}
 <main>
   <section id="tab-jobs" class="tab">
     <table>
-      <thead><tr><th>ID</th><th>Файл</th><th>Статус</th><th>Длит.</th><th>Размер</th><th>Сегм.</th><th>Конфл.</th><th>Стоимость</th><th>Создана</th></tr></thead>
-      <tbody id="jobsBody"><tr><td colspan="9" class="dim">загрузка…</td></tr></tbody>
+      <thead><tr><th>ID</th><th>Запись</th><th>Статус</th><th>Длит.</th><th>Размер</th><th>Сегм.</th><th>Конфл.</th><th>Стоимость</th><th>Создана</th><th></th></tr></thead>
+      <tbody id="jobsBody"><tr><td colspan="10" class="dim">загрузка…</td></tr></tbody>
     </table>
   </section>
 
@@ -76,7 +91,35 @@ a{color:var(--acc)}
     <select id="recSel"><option value="">— запись —</option></select>
     <div id="trWrap" style="display:none">
       <audio id="trAudio" controls preload="metadata"></audio>
+      <div id="playHint" style="display:none;margin:6px 0">
+        <button class="act" data-act="playat">▶ играть с <span id="playHintT"></span></button>
+        <span class="dim" style="font-size:12px;margin-left:6px">браузер не даёт стартовать звук без клика</span>
+      </div>
       <div id="segList"></div>
+    </div>
+  </section>
+
+  <section id="tab-voices" class="tab" style="display:none">
+    <div class="subnav" id="vnav">
+      <button data-vsec="people" class="on">Люди</button>
+      <button data-vsec="enroll">Разметка записи</button>
+      <button data-vsec="sugg">Предложения</button>
+    </div>
+    <audio id="vAudio" controls preload="none"></audio>
+    <div id="vsec-people" class="vsec" style="display:flex;gap:16px;align-items:flex-start">
+      <div id="peopleList" style="flex:0 0 250px"><div class="dim">загрузка…</div></div>
+      <div id="personCard" style="flex:1;min-width:0"><div class="dim">выберите человека слева</div></div>
+    </div>
+    <div id="vsec-enroll" class="vsec" style="display:none">
+      <div class="rsrow" style="margin-top:0">
+        <select id="enrollSel"></select>
+        <button class="act" data-act="ereload">пересчитать</button>
+        <span id="enrollHint" class="dim" style="font-size:12px"></span>
+      </div>
+      <div id="enrollBody"><div class="dim">выберите запись</div></div>
+    </div>
+    <div id="vsec-sugg" class="vsec" style="display:none">
+      <div id="suggBody"><div class="dim">загрузка…</div></div>
     </div>
   </section>
 
@@ -92,7 +135,8 @@ a{color:var(--acc)}
   <section id="tab-sp" class="tab" style="display:none">
     <audio id="spAudio" controls preload="none" style="max-width:420px"></audio>
     <div class="cards" id="spkList"><div class="dim">загрузка…</div></div>
-    <h3>Конфликты</h3>
+    <h3 id="confHead">Конфликты</h3>
+    <div id="confNote" class="dim" style="font-size:12px"></div>
     <div class="cards" id="confList"></div>
   </section>
 </main>
@@ -100,7 +144,8 @@ a{color:var(--acc)}
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
-let TAB = 'jobs', RECS = [], SEGS = [], SPK = [], CONF_BY_SEG = {}, OPEN = null;
+let TAB = 'jobs', RECS = [], SEGS = [], SPK = [], CONF_BY_SEG = {}, OPEN = null, CUR_RID = null, PEND_T = null;
+let VSEC = 'people', VPEOPLE = [], VPERSON = null, ERID = null, ECAND = null, VSTOP = null;
 
 // ---------- утилиты ----------
 const esc = s => (s ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -110,9 +155,15 @@ const fmtBytes = b => b == null ? '—' : (b >= 1073741824 ? (b/1073741824).toFi
 const fmtDT = s => s ? new Date(s).toLocaleString('ru-RU', {hour12:false}) : '—';
 const hue = n => { let h = 0; for (const c of String(n || '')) h = (h*31 + c.charCodeAt(0)) >>> 0; return h % 360; };
 const spkCol = n => `hsl(${hue(n)},60%,70%)`;
+const linkBtn = h => `<button class="lnk" data-act="link" data-h="${esc(h)}" title="скопировать ссылку">🔗</button>`;
+const recTitle = r => r.title || r.filename;
+const cohCol = v => v == null ? 'var(--dim)' : (v >= 0.75 ? 'var(--green)' : (v >= 0.5 ? 'var(--yellow)' : 'var(--red)'));
+const cohTxt = v => v == null ? '—' : (+v).toFixed(2);
+const optList = () => VPEOPLE.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
 
 let errT;
 function showErr(m){ $('err').textContent = m; clearTimeout(errT); errT = setTimeout(() => $('err').textContent = '', 6000); }
+function fail(el, e){ if (el) el.innerHTML = '<div class="errtxt">ошибка загрузки: ' + esc((e && e.message) || e) + '</div>'; }
 
 async function api(path, opts = {}){
   const o = {method: opts.method || 'GET', headers: {}};
@@ -125,13 +176,127 @@ async function api(path, opts = {}){
   return r.json();
 }
 
-// ---------- вкладки ----------
-function showTab(t){
-  TAB = t;
-  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  document.querySelectorAll('.tab').forEach(s => s.style.display = (s.id === 'tab' + '-' + t) ? '' : 'none');
-  const load = {jobs: loadJobs, tr: initTr, disk: loadDisk, sp: loadSp}[t];
-  if (load) load().catch(() => {});
+// ---------- подсветка ----------
+let HL_EL = null, HL_T = null;
+function clearHl(){ if (HL_EL) HL_EL.classList.remove('hl'); HL_EL = null; clearTimeout(HL_T); }
+function focusEl(el, hl){
+  if (!el) return;
+  try { el.scrollIntoView({behavior:'smooth', block:'center'}); } catch (e) { el.scrollIntoView(); }
+  if (hl === false) return;
+  clearHl(); HL_EL = el; el.classList.add('hl'); HL_T = setTimeout(clearHl, 8000);
+}
+
+// ---------- буфер обмена ----------
+async function copyText(t){
+  try { await navigator.clipboard.writeText(t); return true; } catch (e) {}
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand('copy'); ta.remove(); return ok;
+  } catch (e) { return false; }
+}
+async function copyLink(hash, btn){
+  const url = location.origin + location.pathname + '#' + hash;
+  const ok = await copyText(url);
+  const prev = btn.textContent;
+  btn.textContent = ok ? '✓ скопировано' : '✗ ' + url;
+  btn.classList.toggle('ok', ok);
+  setTimeout(() => { btn.textContent = prev; btn.classList.remove('ok'); }, 1400);
+}
+
+// ---------- роутер ----------
+const TAB_HASH = {jobs:'jobs', tr:'transcript', voices:'voices', disk:'disk', sp:'speakers'};
+let LAST_HASH = null, ROUTING = false, NEXT = null;
+
+const curHash = () => location.hash.replace(/^#/, '');
+
+function setHash(h, push){
+  LAST_HASH = h;
+  if (curHash() === h) return;
+  try { history[push ? 'pushState' : 'replaceState'](null, '', '#' + h); }
+  catch (e) { location.hash = h; }
+}
+
+function parseHash(h){
+  let s = '';
+  try { s = decodeURIComponent(h || ''); } catch (e) { s = h || ''; }
+  s = s.replace(/^\/+|\/+$/g, '');
+  if (!s) return {tab:'jobs'};
+  const p = s.split('/');
+  if (p[0] === 'jobs')
+    return {tab:'jobs', rid: /^\d+$/.test(p[1] || '') ? +p[1] : null};
+  if (p[0] === 'transcript'){
+    const r = {tab:'tr', rid:null, sec:null, segId:null};
+    if (p[1]){
+      const m = /^(\d+)(?:@(\d+(?:[.,]\d+)?))?$/.exec(p[1]);
+      if (!m) return {tab:'tr'};
+      r.rid = +m[1];
+      if (m[2] != null) r.sec = parseFloat(m[2].replace(',', '.'));
+    }
+    if (p[2] === 'seg' && /^\d+$/.test(p[3] || '')) r.segId = p[3];
+    return r;
+  }
+  if (p[0] === 'voices'){
+    if (p[1] === 'enroll')
+      return {tab:'voices', vsec:'enroll', rid: /^\d+$/.test(p[2] || '') ? +p[2] : null};
+    if (p[1] === 'suggestions') return {tab:'voices', vsec:'sugg'};
+    return {tab:'voices', vsec:'people', spId: /^\d+$/.test(p[1] || '') ? +p[1] : null};
+  }
+  if (p[0] === 'conflicts')
+    return {tab:'sp', toConf:true, confId: /^\d+$/.test(p[1] || '') ? +p[1] : null};
+  if (p[0] === 'speakers') return {tab:'sp'};
+  if (p[0] === 'disk') return {tab:'disk'};
+  return {tab:'jobs', bad:true};
+}
+
+async function route(h, hl){
+  if (ROUTING){ NEXT = [h, hl]; return; }   // не терять навигацию, пришедшую во время загрузки
+  ROUTING = true;
+  try {
+    const r = parseHash(h);
+    if (r.bad) setHash('jobs', false);      // битый хэш — молча на дефолт
+    await showTab(r, hl === true);
+  } catch (e) {}
+  finally {
+    ROUTING = false;
+    if (NEXT){ const n = NEXT; NEXT = null; route(n[0], n[1]).catch(() => {}); }
+  }
+}
+
+async function go(h, push, hl){ setHash(h, push); await route(h, hl); }
+
+function onHashNav(){
+  const h = curHash();
+  if (h === LAST_HASH) return;   // наш собственный replaceState/pushState
+  LAST_HASH = h;
+  route(h, true).catch(() => {});
+}
+window.addEventListener('hashchange', onHashNav);
+window.addEventListener('popstate', onHashNav);
+
+async function showTab(r, hl){
+  TAB = r.tab;
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === TAB));
+  document.querySelectorAll('.tab').forEach(s => s.style.display = (s.id === 'tab-' + TAB) ? '' : 'none');
+  if (TAB === 'jobs'){
+    if (r.rid != null) OPEN = r.rid;
+    await loadJobs();
+    if (r.rid != null) focusEl(document.querySelector('tr[data-rid="' + r.rid + '"]'), hl);
+  } else if (TAB === 'tr'){
+    await applyTr(r);
+  } else if (TAB === 'voices'){
+    await showVoices(r);
+  } else if (TAB === 'disk'){
+    await loadDisk();
+  } else if (TAB === 'sp'){
+    await loadSp();
+    if (r.confId != null){
+      const el = document.querySelector('.card[data-cid="' + r.confId + '"]');
+      if (el) focusEl(el, true);
+      else { $('confNote').textContent = 'конфликт #' + r.confId + ' не в списке открытых (уже разобран?)'; focusEl($('confHead'), false); }
+    } else if (r.toConf) focusEl($('confHead'), false);
+  }
 }
 
 // ---------- Jobs ----------
@@ -141,47 +306,64 @@ async function loadCosts(){
 }
 
 async function loadJobs(){
-  RECS = await api('/api/recordings');
+  try { RECS = await api('/api/recordings'); }
+  catch (e) {
+    $('jobsBody').innerHTML = '<tr><td colspan="10" class="errtxt">ошибка загрузки: ' +
+      esc((e && e.message) || e) + '</td></tr>';
+    return;
+  }
   renderJobs();
   if (OPEN != null) loadDetail(OPEN).catch(() => {});
   loadCosts().catch(() => {});
 }
 
 function renderJobs(){
+  const hlRid = (HL_EL && HL_EL.dataset) ? HL_EL.dataset.rid : null;   // пережить автообновление
   const rows = RECS.map(r => {
     let h = `<tr data-act="row" data-rid="${r.id}">
       <td class="mono">${r.id}</td>
-      <td>${esc(r.filename)}</td>
+      <td>${esc(recTitle(r))}${r.title && r.title !== r.filename ? `<div class="sub">${esc(r.filename)}</div>` : ''}</td>
       <td><span class="st st-${esc(r.status)}">${esc(r.status)}</span></td>
       <td class="mono">${fmtT(r.duration_sec)}</td>
       <td class="mono">${fmtBytes(r.size_bytes)}</td>
       <td class="mono">${r.segments}</td>
       <td class="mono${r.open_conflicts > 0 ? ' errtxt' : ' dim'}">${r.open_conflicts}</td>
       <td class="mono">${fmtUsd(r.cost_usd)}</td>
-      <td class="dim mono">${fmtDT(r.created_at)}</td></tr>`;
+      <td class="dim mono">${fmtDT(r.created_at)}</td>
+      <td>${linkBtn('jobs/' + r.id)}</td></tr>`;
     if (OPEN === r.id)
-      h += `<tr><td colspan="9"><div id="recdet" class="dim">загрузка…</div></td></tr>`;
+      h += `<tr><td colspan="10"><div id="recdet" class="dim">загрузка…</div></td></tr>`;
     return h;
   }).join('');
-  $('jobsBody').innerHTML = rows || '<tr><td colspan="9" class="dim">записей нет</td></tr>';
+  $('jobsBody').innerHTML = rows || '<tr><td colspan="10" class="dim">записей нет — положите файл в data/inbox</td></tr>';
+  if (hlRid){
+    const el = document.querySelector('tr[data-rid="' + hlRid + '"]');
+    HL_EL = el || null;
+    if (el) el.classList.add('hl');
+  }
 }
 
 function toggleRec(id){
   OPEN = (OPEN === id) ? null : id;
   renderJobs();
-  if (OPEN != null) loadDetail(OPEN).catch(() => {});
+  if (OPEN != null){ setHash('jobs/' + id, true); loadDetail(OPEN).catch(() => {}); }
+  else setHash('jobs', false);
 }
 
 async function loadDetail(id){
-  const d = await api('/api/recordings/' + id);
+  let d;
+  try { d = await api('/api/recordings/' + id); } catch (e) { fail($('recdet'), e); return; }
   const el = $('recdet');
   if (!el || OPEN !== id) return;
   const pipe = d.jobs.map(stageCard).join('<div class="arr">→</div>') || '<span class="dim">этапов нет</span>';
   const rep = ['draft','quality','resolve'].map(s =>
     `<button class="act" data-act="rep" data-rid="${id}" data-stage="${s}">↻ переиграть с ${s}</button>`).join(' ');
   el.classList.remove('dim');
-  el.innerHTML = `<div class="pipe">${pipe}</div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 8px">${rep}</div>`;
+  el.innerHTML = `<div class="sub">${esc(d.filename)}${d.started_at ? ' · запись начата ' + fmtDT(d.started_at) : ''}${d.audio_path ? '' : ' · аудио удалено'}</div>
+    <div class="pipe">${pipe}</div>
+    <div class="rsrow">${rep}
+      <button class="act" data-act="goto" data-h="transcript/${id}">транскрипт →</button>
+      <button class="act" data-act="goto" data-h="voices/enroll/${id}">разметить голоса →</button></div>`;
 }
 
 function stageCard(j){
@@ -201,25 +383,46 @@ async function initTr(){
   if (!RECS.length) RECS = await api('/api/recordings');
   const sel = $('recSel'), cur = sel.value;
   sel.innerHTML = '<option value="">— запись —</option>' +
-    RECS.map(r => `<option value="${r.id}">#${r.id} · ${esc(r.filename)} (${esc(r.status)})</option>`).join('');
+    RECS.map(r => `<option value="${r.id}">#${r.id} · ${esc(recTitle(r))} (${esc(r.status)})</option>`).join('');
   if (cur) sel.value = cur;
 }
 
+async function applyTr(r){
+  try { await initTr(); } catch (e) { fail($('segList'), e); $('trWrap').style.display = ''; return; }
+  const sel = $('recSel');
+  let rid = (r && r.rid != null) ? r.rid : (sel.value ? +sel.value : null);
+  if (rid != null && !RECS.some(x => x.id === rid)) rid = null;     // битый id в хэше
+  if (rid == null && RECS.length) rid = RECS[0].id;                 // самая свежая (список DESC)
+  if (rid == null){
+    $('trWrap').style.display = '';
+    $('segList').innerHTML = '<div class="dim">записей нет</div>';
+    return;
+  }
+  sel.value = String(rid);
+  if (CUR_RID !== rid) await loadSegments();
+  if (r && (r.segId != null || r.sec != null)) jumpTo(r);
+  else { $('playHint').style.display = 'none'; PEND_T = null; setHash('transcript/' + rid, false); }
+}
+
 async function loadSegments(){
-  const rid = $('recSel').value;
-  if (!rid){ $('trWrap').style.display = 'none'; return; }
-  const [segs, confs, spk] = await Promise.all([
-    api('/api/recordings/' + rid + '/segments'),
-    api('/api/conflicts?status=open'),
-    api('/api/speakers'),
-  ]);
-  SEGS = segs; SPK = spk;
-  CONF_BY_SEG = {};
-  confs.forEach(c => { CONF_BY_SEG[c.segment_id] = c.id; });
-  const au = $('trAudio'), src = '/api/audio/' + rid;
-  if (!au.src.endsWith(src)) au.src = src;
+  const rid = +$('recSel').value;
+  if (!rid){ $('trWrap').style.display = 'none'; CUR_RID = null; return; }
   $('trWrap').style.display = '';
-  $('segList').innerHTML = SEGS.map(segHtml).join('') || '<div class="dim">сегментов нет</div>';
+  let segs, confs, spk;
+  try {
+    [segs, confs, spk] = await Promise.all([
+      api('/api/recordings/' + rid + '/segments'),
+      api('/api/conflicts?status=open'),
+      api('/api/speakers'),
+    ]);
+  } catch (e) { fail($('segList'), e); return; }
+  SEGS = segs; SPK = spk; CUR_RID = rid;
+  CONF_BY_SEG = {};
+  confs.forEach(c => { CONF_BY_SEG[String(c.segment_id)] = c.id; });
+  const au = $('trAudio'), src = '/api/audio/' + rid;
+  if (!au.src || !au.src.endsWith(src)) au.src = src;
+  $('segList').innerHTML = SEGS.map(segHtml).join('') ||
+    '<div class="dim">сегментов нет — запись ещё не прошла конвейер</div>';
 }
 
 function segHtml(s, i){
@@ -228,17 +431,17 @@ function segHtml(s, i){
   if (s.confidence != null) badges += `<span class="badge${low ? ' bad' : ''}">${(+s.confidence).toFixed(2)}</span>`;
   if (s.inherited) badges += '<span class="badge">насл.</span>';
   const tog = s.ambiguous ? `<button class="act" data-act="tog" data-i="${i}">разбор</button>` : '';
-  return `<div class="seg${s.ambiguous ? ' amb' : ''}" data-t="${+s.start_sec}">
+  return `<div class="seg${s.ambiguous ? ' amb' : ''}" data-t="${+s.start_sec}" data-id="${s.id}" data-i="${i}">
       <span class="t">${fmtT(s.start_sec)}</span>
       <span class="spk" style="color:${spkCol(s.speaker_name)}">${esc(s.speaker_name)}</span>
       ${badges}
       <span class="txt"${low ? ' style="opacity:.55"' : ''} title="asr_logprob: ${s.asr_logprob != null ? (+s.asr_logprob).toFixed(3) : '—'}">${esc(s.text)}</span>
-      ${tog}
+      ${tog}${linkBtn('transcript/' + CUR_RID + '/seg/' + s.id)}
     </div>` + (s.ambiguous ? panelHtml(s, i) : '');
 }
 
 function panelHtml(s, i){
-  const d = s.detail || {}, cid = CONF_BY_SEG[s.id];
+  const d = s.detail || {}, cid = CONF_BY_SEG[String(s.id)];
   let h = `<div class="pan" id="pan${i}" style="display:none">`;
   if (Array.isArray(d.top) && d.top.length)
     h += '<div class="cand">top: ' + d.top.map(t =>
@@ -254,35 +457,292 @@ function panelHtml(s, i){
 function resolveRow(cid){
   return '<div class="rsrow">' +
     SPK.map((p, n) => `<button class="act" data-act="rs" data-cid="${cid}" data-n="${n}" style="color:${spkCol(p.name)}">${esc(p.name)}</button>`).join('') +
-    `<input placeholder="новое имя"><button class="act" data-act="rsnew" data-cid="${cid}">OK</button></div>`;
+    `<input placeholder="новое имя"><button class="act" data-act="rsnew" data-cid="${cid}">OK</button>` +
+    linkBtn('conflicts/' + cid) + '</div>';
+}
+
+function seekOnly(t){
+  const a = $('trAudio');
+  const go = () => { try { a.currentTime = t; } catch (e) {} };
+  if (a.readyState >= 1) go(); else a.addEventListener('loadedmetadata', go, {once: true});
 }
 
 function seekPlay(t){
-  const a = $('trAudio');
-  const go = () => { a.currentTime = t; a.play().catch(() => {}); };
-  if (a.readyState >= 1) go();
-  else a.addEventListener('loadedmetadata', go, {once: true});
+  seekOnly(t);
+  $('trAudio').play().catch(() => {});
+  $('playHint').style.display = 'none';
 }
 
-async function listenSegment(rid, t){
-  showTab('tr');
-  await initTr();
-  const sel = $('recSel');
-  if (sel.value !== String(rid)){ sel.value = String(rid); await loadSegments(); }
-  else if ($('trWrap').style.display === 'none') await loadSegments();
-  seekPlay(t);
+function showHint(t){
+  PEND_T = t;
+  if (t == null){ $('playHint').style.display = 'none'; return; }
+  $('playHintT').textContent = fmtT(t);
+  $('playHint').style.display = '';
+}
+
+// прыжок к сегменту/моменту из хэша: без автоплея, с подсветкой
+function jumpTo(r){
+  let s = null;
+  if (r.segId != null) s = SEGS.find(x => String(x.id) === String(r.segId));
+  else if (r.sec != null){
+    for (const x of SEGS){ if (+x.start_sec <= r.sec + 0.01) s = x; else break; }
+    if (!s && SEGS.length) s = SEGS[0];
+  }
+  const t = (r.sec != null) ? r.sec : (s ? +s.start_sec : null);
+  if (t != null) seekOnly(t);
+  showHint(t);
+  if (!s) return;
+  const el = document.querySelector('.seg[data-id="' + s.id + '"]');
+  focusEl(el, true);
+  if (s.ambiguous && el){ const p = $('pan' + el.dataset.i); if (p) p.style.display = ''; }
 }
 
 async function resolveConflict(cid, name){
   await api('/api/conflicts/' + cid + '/resolve', {method: 'POST', body: {name}});
-  if (TAB === 'tr') loadSegments().catch(() => {});
+  if (TAB === 'tr' && CUR_RID != null){ const r = CUR_RID; CUR_RID = null; $('recSel').value = String(r); await loadSegments(); }
   if (TAB === 'sp') loadSp().catch(() => {});
-  loadJobs().catch(() => {});
+  if (TAB === 'jobs') loadJobs().catch(() => {});
+}
+
+// ---------- Голоса: общий плеер ----------
+function playSpan(rid, start, end){
+  const a = $('vAudio'), src = '/api/audio/' + rid;
+  if (!a.src || !a.src.endsWith(src)) a.src = src;
+  VSTOP = (end != null && +end > +start) ? +end : null;
+  const go = () => { try { a.currentTime = +start; } catch (e) {} a.play().catch(() => {}); };
+  if (a.readyState >= 1) go(); else a.addEventListener('loadedmetadata', go, {once: true});
+}
+function playSample(sid){
+  const a = $('vAudio');
+  VSTOP = null; a.src = '/api/speakers/sample/' + sid; a.play().catch(() => {});
+}
+$('vAudio').addEventListener('timeupdate', () => {
+  const a = $('vAudio');
+  if (VSTOP != null && a.currentTime >= VSTOP){ a.pause(); VSTOP = null; }
+});
+
+async function showVoices(r){
+  VSEC = r.vsec || 'people';
+  document.querySelectorAll('#vnav button').forEach(b => b.classList.toggle('on', b.dataset.vsec === VSEC));
+  document.querySelectorAll('.vsec').forEach(s => s.style.display = (s.id === 'vsec-' + VSEC) ? (s.id === 'vsec-people' ? 'flex' : '') : 'none');
+  if (VSEC === 'people'){
+    await loadPeople();
+    if (r.spId != null) await openPerson(r.spId);
+  } else if (VSEC === 'enroll'){
+    if (!VPEOPLE.length) await loadPeople();
+    await initEnroll(r.rid);
+  } else {
+    if (!VPEOPLE.length) await loadPeople();
+    await loadSugg();
+  }
+}
+
+async function loadPeople(){
+  try { VPEOPLE = await api('/api/speakers'); }
+  catch (e) { fail($('peopleList'), e); return; }
+  $('peopleList').innerHTML = VPEOPLE.length ? VPEOPLE.map(p => `
+    <div class="pitem${VPERSON && VPERSON.id === p.id ? ' on' : ''}" data-act="person" data-id="${p.id}">
+      <div><b style="color:${spkCol(p.name)}">${esc(p.name)}</b></div>
+      ${p.aliases && p.aliases.length ? `<div class="sub">${esc(p.aliases.join(', '))}</div>` : ''}
+      <div class="sub">${p.active} акт.${p.inactive ? ' · ' + p.inactive + ' искл.' : ''} · когерентность
+        <span style="color:${cohCol(p.avg_coherence)}">${cohTxt(p.avg_coherence)}</span></div>
+    </div>`).join('') : '<div class="dim">людей в базе нет</div>';
+}
+
+async function openPerson(id, push){
+  try { VPERSON = await api('/api/speakers/' + id + '/detail'); }
+  catch (e) { fail($('personCard'), e); return; }
+  renderPerson();
+  document.querySelectorAll('.pitem').forEach(el => el.classList.toggle('on', +el.dataset.id === +id));
+  setHash('voices/' + id, push === true);
+}
+
+function renderPerson(){
+  const p = VPERSON;
+  const rows = p.samples.map(s => `<tr${s.is_active ? '' : ' class="off"'}>
+    <td>${s.has_path ? `<button class="act" data-act="vplay" data-sid="${s.id}">▶</button>` : '<span class="sub">нет файла</span>'}</td>
+    <td class="mono">${s.duration_sec != null ? (+s.duration_sec).toFixed(1) + 'с' : '—'}</td>
+    <td>${esc(s.kind)}</td>
+    <td class="sub" style="word-break:break-all">${esc(s.source || '')}</td>
+    <td class="mono" style="color:${cohCol(s.coherence)}"><b>${cohTxt(s.coherence)}</b></td>
+    <td><button class="act" data-act="vtog" data-sid="${s.id}">${s.is_active ? 'активен' : 'исключён'}</button></td>
+    <td><button class="act" data-act="vdel" data-sid="${s.id}">удалить</button></td></tr>`).join('');
+  $('personCard').innerHTML = `
+    <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+      <b style="color:${spkCol(p.name)};font-size:16px">${esc(p.name)}</b>
+      <span class="dim">${p.active} активных · ${p.inactive} исключено · средняя когерентность
+        <span style="color:${cohCol(p.avg_coherence)}">${cohTxt(p.avg_coherence)}</span></span>
+      ${linkBtn('voices/' + p.id)}
+    </div>
+    ${p.aliases && p.aliases.length ? `<div class="sub">алиасы: ${esc(p.aliases.join(', '))}</div>` : ''}
+    <table style="margin-top:8px"><thead><tr><th></th><th>длит.</th><th>вид</th><th>источник</th><th>coh</th><th>статус</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="7" class="dim">сэмплов нет</td></tr>'}</tbody></table>
+    <div class="rsrow"><button class="act" data-act="goto" data-h="voices/enroll">+ добавить эталон из записи</button></div>`;
+}
+
+// ---------- Голоса: разметка записи ----------
+async function initEnroll(rid){
+  if (!RECS.length){ try { RECS = await api('/api/recordings'); } catch (e) { fail($('enrollBody'), e); return; } }
+  const sel = $('enrollSel');
+  sel.innerHTML = RECS.map(r => `<option value="${r.id}">#${r.id} · ${esc(recTitle(r))}</option>`).join('');
+  let id = (rid != null && RECS.some(r => r.id === rid)) ? rid : (RECS.length ? RECS[0].id : null);
+  if (id == null){ $('enrollBody').innerHTML = '<div class="dim">записей нет</div>'; return; }
+  sel.value = String(id);
+  await loadCandidates(id);
+}
+
+async function loadCandidates(rid){
+  ERID = rid;
+  $('enrollBody').innerHTML = '<div class="dim">считаю эмбеддинги фрагментов…</div>';
+  try { ECAND = await api('/api/enroll/candidates?recording_id=' + rid); }
+  catch (e) { fail($('enrollBody'), e); return; }
+  renderCandidates();
+}
+
+function renderCandidates(){
+  const d = ECAND;
+  $('enrollHint').textContent = d.has_audio ? '' : 'аудио записи недоступно — матч и эталоны не посчитать';
+  $('enrollBody').innerHTML = d.groups.length ? d.groups.map((g, i) => `
+    <div class="card ecard" data-i="${i}" style="width:100%">
+      <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+        <b style="color:${spkCol(g.label)};font-size:15px">${esc(g.label)}</b>
+        ${g.known ? '<span class="badge">есть в базе</span>' : '<span class="badge bad">не опознан</span>'}
+        <span class="dim">говорил ${fmtT(g.total_sec)} · ${g.count} реплик</span>
+      </div>
+      <div class="sub" style="margin-top:4px">${g.match.length
+        ? 'матч по базе: ' + g.match.map(m => `${esc(m.name)} <b style="color:${cohCol(m.cos)}">${(+m.cos).toFixed(2)}</b>`).join(' · ')
+        : esc(g.match_error || 'база эталонов пуста')}</div>
+      <div style="margin:8px 0">${g.top.map(t => `
+        <div class="frag">
+          <button class="act" data-act="vspan" data-rid="${d.recording_id}" data-s="${t.start_sec}" data-e="${t.end_sec}">▶</button>
+          <span class="t">${fmtT(t.start_sec)}</span>
+          <span class="badge">${(t.end_sec - t.start_sec).toFixed(1)}с</span>
+          <span class="txt">${esc(t.text)}</span>
+        </div>`).join('') || '<span class="dim">фрагментов нет</span>'}</div>
+      <div class="rsrow">
+        <select data-role="who"><option value="">— кто это? —</option>${optList()}</select>
+        <button class="act" data-act="ewho">Это он / она</button>
+        <span class="dim">|</span>
+        <input data-role="nname" placeholder="новый человек">
+        <input data-role="nalias" placeholder="алиасы через запятую" style="width:160px">
+        <button class="act" data-act="enew">Это новый человек</button>
+        <span class="dim">|</span>
+        <button class="act" data-act="etrash">Мусор/фон</button>
+      </div>
+      <div class="eres sub" style="margin-top:8px"></div>
+    </div>`).join('') : '<div class="dim">в этой записи нет сегментов</div>';
+}
+
+async function enrollAct(card, kind){
+  const g = ECAND.groups[+card.dataset.i], res = card.querySelector('.eres'), best = g.top[0];
+  let name = '', mode = 'existing', aliases = [];
+  if (kind === 'who'){
+    name = card.querySelector('[data-role="who"]').value;
+    if (!name){ res.textContent = 'выберите человека в списке'; return; }
+  } else if (kind === 'new'){
+    name = card.querySelector('[data-role="nname"]').value.trim();
+    aliases = card.querySelector('[data-role="nalias"]').value.split(',').map(s => s.trim()).filter(Boolean);
+    mode = 'new_speaker';
+    if (!name){ res.textContent = 'введите имя'; return; }
+  } else {
+    name = '[noise]';
+  }
+  res.style.color = ''; res.textContent = 'работаю…';
+  let msg = '';
+  try {
+    if (kind !== 'trash' && best && ECAND.has_audio){
+      const e = await api('/api/enroll', {method:'POST', body:{
+        recording_id: ERID, start_sec: best.start_sec, end_sec: best.end_sec,
+        speaker_name: name, mode, aliases}});
+      msg = ` · стало ${e.samples_total} сэмплов (${e.active} активных) · coherence нового ${cohTxt(e.coherence)}` +
+            ` · новый матч фрагмента: ${e.match.map(m => m.name + ' ' + (+m.cos).toFixed(2)).join(' · ')}`;
+    }
+    const r = await api('/api/enroll/rename_cluster', {method:'POST', body:{
+      recording_id: ERID, from_label: g.label, to_name: name}});
+    res.style.color = 'var(--green)';
+    res.textContent = `переименовано сегментов: ${r.updated}` +
+      (r.conflicts_closed ? `, закрыто конфликтов: ${r.conflicts_closed}` : '') + msg;
+    card.querySelector('.rsrow').style.display = 'none';
+    g.label = name;
+    loadPeople().catch(() => {});
+  } catch (e) {
+    res.style.color = 'var(--red)';
+    res.textContent = 'не вышло: ' + ((e && e.message) || e);
+  }
+}
+
+// ---------- Голоса: предложения ----------
+async function loadSugg(){
+  $('suggBody').innerHTML = '<div class="dim">загрузка…</div>';
+  let d;
+  try { d = await api('/api/enroll/suggestions'); } catch (e) { fail($('suggBody'), e); return; }
+  const span = s => `<button class="act" data-act="vspan" data-rid="${s.recording_id}" data-s="${s.start_sec}" data-e="${s.end_sec}">▶</button>`;
+  const head = s => `<div class="sub">запись #${s.recording_id} «${esc(s.rec_title)}» · ${fmtT(s.start_sec)}–${fmtT(s.end_sec)}` +
+    ` · ${(s.end_sec - s.start_sec).toFixed(1)}с${s.confidence != null ? ' · cos ' + (+s.confidence).toFixed(2) : ''}</div>`;
+
+  const unnamed = d.unnamed.map(s => `<div class="card" style="width:100%">
+      ${head(s)}
+      <div style="margin:4px 0"><b style="color:${spkCol(s.speaker_name)}">${esc(s.speaker_name)}</b>: «${esc(s.text)}»</div>
+      <div class="rsrow">${span(s)}
+        <select data-role="who"><option value="">— кто это? —</option>${optList()}</select>
+        <button class="act" data-act="sname" data-rid="${s.recording_id}" data-label="${esc(s.speaker_name)}" data-s="${s.start_sec}" data-e="${s.end_sec}">назвать кластер + эталон</button>
+        <button class="act" data-act="goto" data-h="voices/enroll/${s.recording_id}">разметить запись →</button>
+        ${linkBtn('transcript/' + s.recording_id + '/seg/' + s.id)}</div>
+      <div class="eres sub" style="margin-top:6px"></div></div>`).join('');
+
+  const enrich = d.enrich.map(s => `<div class="card" style="width:100%">
+      ${head(s)}
+      <div style="margin:4px 0"><b style="color:${spkCol(s.speaker_name)}">${esc(s.speaker_name)}</b>: «${esc(s.text)}»</div>
+      <div class="rsrow">${span(s)}
+        <button class="act" data-act="sadd" data-rid="${s.recording_id}" data-name="${esc(s.speaker_name)}" data-s="${s.start_sec}" data-e="${s.end_sec}">в эталоны ${esc(s.speaker_name)}</button>
+        ${linkBtn('transcript/' + s.recording_id + '/seg/' + s.id)}</div>
+      <div class="eres sub" style="margin-top:6px"></div></div>`).join('');
+
+  const bad = d.bad_samples.map(s => `<div class="card" style="width:100%">
+      <div class="sub">${esc(s.kind)} · ${s.duration_sec != null ? (+s.duration_sec).toFixed(1) + 'с' : '—'} · ${esc(s.source || '')}</div>
+      <div style="margin:4px 0"><b style="color:${spkCol(s.speaker_name)}">${esc(s.speaker_name)}</b> ·
+        coherence <b style="color:${cohCol(s.coherence)}">${cohTxt(s.coherence)}</b></div>
+      <div class="rsrow">
+        ${s.has_path ? `<button class="act" data-act="vplay" data-sid="${s.id}">▶</button>` : '<span class="sub">нет файла</span>'}
+        <button class="act" data-act="sexcl" data-sid="${s.id}">исключить из эталона</button></div></div>`).join('');
+
+  $('suggBody').innerHTML =
+    `<h3 style="margin-top:0">Назвать неизвестных <span class="dim">— анонимные кластеры длиннее 6с</span></h3>` +
+      (unnamed || '<div class="dim">пусто — все кластеры названы</div>') +
+    `<h3>Дополнить эталон <span class="dim">— свои же реплики с cos 0.50–0.75, другая акустика</span></h3>` +
+      (enrich || '<div class="dim">пусто</div>') +
+    `<h3>Исключить плохой сэмпл <span class="dim">— активные эталоны с когерентностью ниже 0.5</span></h3>` +
+      (bad || '<div class="dim">пусто — мусорных эталонов нет</div>');
+}
+
+async function suggEnroll(card, rid, name, s, e, label){
+  const res = card.querySelector('.eres');
+  res.style.color = ''; res.textContent = 'работаю…';
+  try {
+    const r = await api('/api/enroll', {method:'POST', body:{
+      recording_id: +rid, start_sec: +s, end_sec: +e, speaker_name: name, mode: 'existing'}});
+    let msg = `стало ${r.samples_total} сэмплов (${r.active} активных) · coherence нового ${cohTxt(r.coherence)}` +
+      ` · новый матч: ${r.match.map(m => m.name + ' ' + (+m.cos).toFixed(2)).join(' · ')}`;
+    if (label){
+      const rc = await api('/api/enroll/rename_cluster', {method:'POST', body:{
+        recording_id: +rid, from_label: label, to_name: name}});
+      msg = `переименовано сегментов: ${rc.updated}` +
+        (rc.conflicts_closed ? `, закрыто конфликтов: ${rc.conflicts_closed}` : '') + ' · ' + msg;
+    }
+    res.style.color = 'var(--green)';
+    res.textContent = msg;
+    card.querySelectorAll('button.act, select').forEach(el => { if (el.dataset.act !== 'vspan') el.disabled = true; });
+    loadPeople().catch(() => {});
+  } catch (err) {
+    res.style.color = 'var(--red)';
+    res.textContent = 'не вышло: ' + ((err && err.message) || err);
+  }
 }
 
 // ---------- Диск ----------
 async function loadDisk(){
-  const d = await api('/api/disk');
+  let d;
+  try { d = await api('/api/disk'); } catch (e) { fail($('diskCards'), e); $('diskTop').innerHTML = ''; return; }
   $('diskCards').innerHTML =
     Object.entries(d.folders).map(([k, v]) =>
       `<div class="card"><div class="dim">${esc(k)}</div><div class="v">${Number(v).toFixed(1)} МБ</div></div>`).join('') +
@@ -290,25 +750,29 @@ async function loadDisk(){
     `<div class="card" style="border-color:var(--acc)"><div class="dim">всего</div><div class="v">${Number(d.total_mb).toFixed(1)} МБ</div></div>`;
   $('diskTop').innerHTML = d.top_files.map(f =>
     `<tr><td class="mono">${Number(f.mb).toFixed(1)}</td><td style="word-break:break-all" class="dim">${esc(f.path)}</td></tr>`).join('') ||
-    '<tr><td colspan="2" class="dim">пусто</td></tr>';
+    '<tr><td colspan="2" class="dim">файлов нет</td></tr>';
 }
 
 // ---------- Спикеры ----------
 async function loadSp(){
-  const [spk, confs] = await Promise.all([api('/api/speakers'), api('/api/conflicts?status=open')]);
-  SPK = spk;
-  $('spkList').innerHTML = spk.map(spCard).join('') || '<div class="dim">спикеров нет</div>';
+  let spk, confs;
+  try { [spk, confs] = await Promise.all([api('/api/speakers'), api('/api/conflicts?status=open')]); }
+  catch (e) { fail($('spkList'), e); $('confList').innerHTML = ''; return; }
+  SPK = spk; VPEOPLE = spk;
+  $('confNote').textContent = '';
+  $('spkList').innerHTML = spk.map(spCard).join('') || '<div class="dim">людей в базе нет</div>';
   $('confList').innerHTML = confs.map(confCard).join('') || '<div class="dim">открытых конфликтов нет</div>';
 }
 
 function spCard(p){
   const counts = Object.entries(p.sample_counts || {}).map(([k, v]) => `${esc(k)}: ${v}`).join(' · ') || 'нет сэмплов';
   const btns = (p.samples || []).filter(s => s.has_path).map(s =>
-    `<button class="act" data-act="smp" data-sid="${s.id}">▶ ${esc(s.kind)}${s.duration_sec ? ' ' + (+s.duration_sec).toFixed(1) + 'с' : ''}</button>`).join('');
+    `<button class="act${s.is_active ? '' : ' off'}" data-act="smp" data-sid="${s.id}">▶ ${esc(s.kind)}${s.duration_sec ? ' ' + (+s.duration_sec).toFixed(1) + 'с' : ''}</button>`).join('');
   return `<div class="card" style="min-width:260px">
-    <div><b style="color:${spkCol(p.name)}">${esc(p.name)}</b></div>
+    <div><b style="color:${spkCol(p.name)}">${esc(p.name)}</b> ${linkBtn('voices/' + p.id)}</div>
     ${p.aliases && p.aliases.length ? `<div class="dim">${esc(p.aliases.join(', '))}</div>` : ''}
     <div class="dim">${counts}</div>
+    <div class="sub">когерентность <span style="color:${cohCol(p.avg_coherence)}">${cohTxt(p.avg_coherence)}</span>${p.inactive ? ' · исключено ' + p.inactive : ''}</div>
     <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">${btns}</div>
   </div>`;
 }
@@ -316,13 +780,14 @@ function spCard(p){
 function confCard(c){
   const d = c.detail || {};
   const top = Array.isArray(d.top) ? d.top.map(t => `${esc(t.name)} ${(+t.cos).toFixed(2)}`).join(' · ') : '';
-  return `<div class="card" style="width:100%">
+  return `<div class="card" data-cid="${c.id}" style="width:100%">
     <div class="dim">#${c.id} · ${esc(c.reason)} · запись #${c.recording_id} · ${fmtT(c.start_sec)}–${fmtT(c.end_sec)} ·
-      <span style="color:${spkCol(c.speaker_name)}">${esc(c.speaker_name)}</span>${c.confidence != null ? ' · ' + (+c.confidence).toFixed(2) : ''}</div>
+      <span style="color:${spkCol(c.speaker_name)}">${esc(c.speaker_name)}</span>${c.confidence != null ? ' · ' + (+c.confidence).toFixed(2) : ''}
+      ${linkBtn('conflicts/' + c.id)}</div>
     <div style="margin:6px 0">«${esc(c.text)}»</div>
     ${top ? `<div class="dim">top: ${top}${d.cluster_default ? ' · cluster: ' + esc(d.cluster_default.name) : ''}</div>` : ''}
     <div class="rsrow">
-      <button class="act" data-act="listen" data-rid="${c.recording_id}" data-t="${+c.start_sec}">▶ слушать</button>
+      <button class="act" data-act="goto" data-h="transcript/${c.recording_id}/seg/${c.segment_id}">▶ слушать</button>
       ${SPK.map((p, n) => `<button class="act" data-act="rs" data-cid="${c.id}" data-n="${n}" style="color:${spkCol(p.name)}">${esc(p.name)}</button>`).join('')}
       <input placeholder="новое имя"><button class="act" data-act="rsnew" data-cid="${c.id}">OK</button>
     </div>
@@ -331,13 +796,22 @@ function confCard(c){
 
 // ---------- события ----------
 document.addEventListener('click', async e => {
+  if (HL_EL && !e.target.closest('.hl')) clearHl();
   const nb = e.target.closest('nav button');
-  if (nb){ showTab(nb.dataset.tab); return; }
+  if (nb){ go(TAB_HASH[nb.dataset.tab], false).catch(() => {}); return; }
+  const vb = e.target.closest('#vnav button');
+  if (vb){
+    const h = {people:'voices', enroll:'voices/enroll', sugg:'voices/suggestions'}[vb.dataset.vsec];
+    go(h, false).catch(() => {});
+    return;
+  }
   const b = e.target.closest('[data-act]');
   if (b){
     try {
-      const a = b.dataset.act;
-      if (a === 'row') toggleRec(+b.dataset.rid);
+      const a = b.dataset.act, card = b.closest('.card');
+      if (a === 'link') await copyLink(b.dataset.h, b);
+      else if (a === 'goto') await go(b.dataset.h, true, true);
+      else if (a === 'row') toggleRec(+b.dataset.rid);
       else if (a === 'tog'){ const p = $('pan' + b.dataset.i); if (p) p.style.display = p.style.display === 'none' ? '' : 'none'; }
       else if (a === 'rs') await resolveConflict(+b.dataset.cid, SPK[+b.dataset.n].name);
       else if (a === 'rsnew'){
@@ -346,7 +820,46 @@ document.addEventListener('click', async e => {
         if (v) await resolveConflict(+b.dataset.cid, v);
       }
       else if (a === 'smp'){ const au = $('spAudio'); au.src = '/api/speakers/sample/' + b.dataset.sid; au.play().catch(() => {}); }
-      else if (a === 'listen') await listenSegment(+b.dataset.rid, +b.dataset.t);
+      else if (a === 'playat'){ if (PEND_T != null) seekPlay(PEND_T); }
+      else if (a === 'person') await openPerson(+b.dataset.id, true);
+      else if (a === 'vplay') playSample(b.dataset.sid);
+      else if (a === 'vspan') playSpan(b.dataset.rid, b.dataset.s, b.dataset.e);
+      else if (a === 'vtog'){
+        const res = await api('/api/speakers/sample/' + b.dataset.sid + '/toggle', {method:'POST'});
+        if (VPERSON){
+          VPERSON.samples.forEach(s => {
+            if (String(s.id) === String(b.dataset.sid)) s.is_active = res.is_active;
+            if (res.coherence[s.id] !== undefined) s.coherence = res.coherence[s.id];
+          });
+          VPERSON.active = res.active; VPERSON.inactive = res.inactive;
+          VPERSON.avg_coherence = res.avg_coherence;
+          renderPerson();
+        }
+        loadPeople().catch(() => {});
+      }
+      else if (a === 'vdel'){
+        if (!confirm('Убрать сэмпл из базы навсегда? Аудиофайл на диске останется.')) return;
+        await api('/api/speakers/sample/' + b.dataset.sid, {method:'DELETE'});
+        if (VPERSON) await openPerson(VPERSON.id);
+        loadPeople().catch(() => {});
+      }
+      else if (a === 'sexcl'){
+        await api('/api/speakers/sample/' + b.dataset.sid + '/toggle', {method:'POST'});
+        await loadSugg(); loadPeople().catch(() => {});
+      }
+      else if (a === 'ereload') await loadCandidates(+$('enrollSel').value);
+      else if (a === 'ewho') await enrollAct(card, 'who');
+      else if (a === 'enew') await enrollAct(card, 'new');
+      else if (a === 'etrash'){
+        if (confirm('Пометить весь кластер как мусор/фон? Эталон добавлен не будет.'))
+          await enrollAct(card, 'trash');
+      }
+      else if (a === 'sname'){
+        const who = card.querySelector('[data-role="who"]').value;
+        if (!who){ card.querySelector('.eres').textContent = 'выберите человека в списке'; return; }
+        await suggEnroll(card, b.dataset.rid, who, b.dataset.s, b.dataset.e, b.dataset.label);
+      }
+      else if (a === 'sadd') await suggEnroll(card, b.dataset.rid, b.dataset.name, b.dataset.s, b.dataset.e, null);
       else if (a === 'rep'){
         if (confirm('Переиграть запись #' + b.dataset.rid + ' с этапа ' + b.dataset.stage + '?')){
           await api('/api/recordings/' + b.dataset.rid + '/reprocess', {method: 'POST', body: {from_stage: b.dataset.stage}});
@@ -357,13 +870,30 @@ document.addEventListener('click', async e => {
     return;
   }
   const sg = e.target.closest('.seg');
-  if (sg && sg.dataset.t !== undefined) seekPlay(+sg.dataset.t);
+  if (sg && sg.dataset.t !== undefined){
+    seekPlay(+sg.dataset.t);
+    setHash('transcript/' + CUR_RID + '/seg/' + sg.dataset.id, false);
+  }
 });
 
-$('recSel').addEventListener('change', () => loadSegments().catch(() => {}));
+$('recSel').addEventListener('change', async () => {
+  try {
+    CUR_RID = null;
+    await loadSegments();
+    showHint(null);
+    if (CUR_RID != null) setHash('transcript/' + CUR_RID, true);
+  } catch (e) {}
+});
 
-setInterval(() => { if (TAB === 'jobs') loadJobs().catch(() => {}); }, 5000);
-loadJobs().catch(() => {});
+$('enrollSel').addEventListener('change', async () => {
+  const v = +$('enrollSel').value;
+  if (v){ setHash('voices/enroll/' + v, false); await loadCandidates(v); }
+});
+
+setInterval(() => { if (TAB === 'jobs' && !ROUTING) loadJobs().catch(() => {}); }, 5000);
+
+function boot(){ LAST_HASH = curHash(); route(LAST_HASH, true).catch(() => {}); }
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 </script>
 </body>
 </html>

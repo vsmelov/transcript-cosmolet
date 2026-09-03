@@ -97,3 +97,4 @@ CREATE TABLE costs (
     note         text
 );
 CREATE INDEX costs_day_idx ON costs(day);
+ALTER TABLE recordings ADD COLUMN IF NOT EXISTS title text;  -- человеческое название (из Plaud или имени файла)

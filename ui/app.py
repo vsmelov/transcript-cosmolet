@@ -1,18 +1,28 @@
-"""cosmolet UI — FastAPI поверх Postgres: статика, API, аудио с HTTP Range."""
+"""cosmolet UI — FastAPI поверх Postgres: статика, API, аудио с HTTP Range, разметка голосов."""
 import mimetypes
 import os
 import re
 import threading
+import time
+from pathlib import Path
 
 import psycopg
 from psycopg.rows import dict_row
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
+import voice
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 DB_URL = os.environ.get("DATABASE_URL", "postgresql://cosmolet:cosmolet@localhost:5432/cosmolet")
 DATA_FOLDERS = ["inbox", "in_progress", "done", "failed", "artifacts", "audio"]
+SPEAKERS_DIR = os.path.join(DATA_DIR, "speakers")
+
+# мягкое исключение сэмпла из эталона (можно вернуть) — колонки может не быть в старой БД
+MIGRATIONS = [
+    "ALTER TABLE speaker_samples ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true",
+]
 
 app = FastAPI(title="cosmolet ui")
 
@@ -31,6 +41,8 @@ def _run(fn):
             try:
                 if _conn is None or _conn.closed:
                     _conn = psycopg.connect(DB_URL, autocommit=True, row_factory=dict_row)
+                    for sql in MIGRATIONS:          # идемпотентно, на каждое новое соединение
+                        _conn.execute(sql)
                 return fn(_conn)
             except psycopg.OperationalError as e:
                 last = e
@@ -135,7 +147,8 @@ def index():
 @app.get("/api/recordings")
 def recordings():
     return q("""
-        SELECT r.id, r.filename, r.status, r.duration_sec, r.size_bytes, r.created_at,
+        SELECT r.id, r.filename, r.title, r.status, r.duration_sec, r.size_bytes,
+               r.started_at, r.created_at,
                coalesce(j.cost, 0)  AS cost_usd,
                coalesce(sg.n, 0)    AS segments,
                coalesce(cf.n, 0)    AS open_conflicts
@@ -195,13 +208,80 @@ def audio(rec_id: int, request: Request):
     return serve_range(p, request)
 
 
+# --- голоса: эталоны, когерентность, матчинг --------------------------------
+
+def load_samples(where: str = "", params=()):
+    return q(f"""SELECT id, speaker_id, path, kind, duration_sec, source, is_active, added_at,
+                        embedding
+                 FROM speaker_samples {where} ORDER BY speaker_id, id""", params)
+
+
+def decorate(rows):
+    """Убрать вектора из выдачи, добавить coherence (внутри каждого человека) и has_path."""
+    by_sp = {}
+    for r in rows:
+        by_sp.setdefault(r["speaker_id"], []).append(r)
+    for items in by_sp.values():
+        coh = voice.coherences([(r["id"], voice.parse_vec(r["embedding"]), r["is_active"])
+                                for r in items])
+        for r in items:
+            r["coherence"] = coh.get(r["id"])
+    for r in rows:
+        r["has_embedding"] = r.pop("embedding") is not None
+        r["has_path"] = bool(r["path"]) and safe_data_path(r["path"], allow_abs=True) is not None
+    return rows
+
+
+def stats(items):
+    act = [r for r in items if r["is_active"]]
+    cohs = [r["coherence"] for r in act if r["coherence"] is not None]
+    return {
+        "active": len(act),
+        "inactive": len(items) - len(act),
+        "avg_coherence": round(sum(cohs) / len(cohs), 4) if cohs else None,
+    }
+
+
+def known_refs() -> dict:
+    """Эталон каждого человека — среднее нормированных векторов его АКТИВНЫХ сэмплов."""
+    rows = q("""SELECT s.name, ss.embedding FROM speakers s
+                JOIN speaker_samples ss ON ss.speaker_id = s.id
+                WHERE ss.embedding IS NOT NULL AND ss.is_active""")
+    acc = {}
+    for r in rows:
+        v = voice.parse_vec(r["embedding"])
+        if v is not None:
+            acc.setdefault(r["name"], []).append(v)
+    return {n: voice.centroid(vs) for n, vs in acc.items()}
+
+
+_SPAN_CACHE = {}
+
+
+def span_vec(key, src, start, end):
+    """Вектор куска записи с кэшем — экран разметки перезапрашивается часто."""
+    k = (key, round(float(start), 2))
+    v = _SPAN_CACHE.get(k)
+    if v is None:
+        dur = max(float(end) - float(start), voice.CLIP_MIN_SEC)
+        v = voice.embed_span(Path(src), float(start), dur)
+        if len(_SPAN_CACHE) > 400:
+            _SPAN_CACHE.clear()
+        _SPAN_CACHE[k] = v
+    return v
+
+
+def rec_audio(rec_id: int):
+    row = q1("SELECT id, audio_path, title, filename FROM recordings WHERE id = %s", (rec_id,))
+    if row is None:
+        raise HTTPException(404, "recording not found")
+    return row, safe_data_path(row["audio_path"])
+
+
 @app.get("/api/speakers")
 def speakers():
     people = q("SELECT id, name, aliases, created_at FROM speakers ORDER BY name")
-    samples = q("""
-        SELECT id, speaker_id, kind, duration_sec, source, added_at,
-               (path IS NOT NULL) AS has_path
-        FROM speaker_samples ORDER BY id""")
+    samples = decorate(load_samples())
     by_sp = {}
     for s in samples:
         by_sp.setdefault(s["speaker_id"], []).append(s)
@@ -212,7 +292,214 @@ def speakers():
             counts[s["kind"]] = counts.get(s["kind"], 0) + 1
         p["sample_counts"] = counts
         p["samples"] = ss
+        p.update(stats(ss))
     return people
+
+
+@app.post("/api/speakers")
+def speaker_create(body: dict):
+    name = str((body or {}).get("name", "")).strip()
+    if not name:
+        raise HTTPException(400, "name is required")
+    aliases = [str(a).strip() for a in (body or {}).get("aliases") or [] if str(a).strip()]
+    row = q1("""INSERT INTO speakers (name, aliases) VALUES (%s, %s)
+                ON CONFLICT (name) DO UPDATE SET aliases = EXCLUDED.aliases
+                RETURNING id, name, aliases, created_at""", (name, aliases))
+    return row
+
+
+@app.get("/api/speakers/{sp_id}/detail")
+def speaker_detail(sp_id: int):
+    sp = q1("SELECT id, name, aliases, created_at FROM speakers WHERE id = %s", (sp_id,))
+    if sp is None:
+        raise HTTPException(404, "speaker not found")
+    sp["samples"] = decorate(load_samples("WHERE speaker_id = %s", (sp_id,)))
+    sp.update(stats(sp["samples"]))
+    return sp
+
+
+@app.post("/api/speakers/sample/{sample_id}/toggle")
+def sample_toggle(sample_id: int):
+    row = q1("""UPDATE speaker_samples SET is_active = NOT is_active
+                WHERE id = %s RETURNING id, speaker_id, is_active""", (sample_id,))
+    if row is None:
+        raise HTTPException(404, "sample not found")
+    items = decorate(load_samples("WHERE speaker_id = %s", (row["speaker_id"],)))
+    return {"ok": True, "sample_id": sample_id, "is_active": row["is_active"],
+            "speaker_id": row["speaker_id"],
+            "coherence": {r["id"]: r["coherence"] for r in items}, **stats(items)}
+
+
+@app.delete("/api/speakers/sample/{sample_id}")
+def sample_delete(sample_id: int):
+    row = q1("DELETE FROM speaker_samples WHERE id = %s RETURNING id, speaker_id, path",
+             (sample_id,))
+    if row is None:
+        raise HTTPException(404, "sample not found")
+    items = decorate(load_samples("WHERE speaker_id = %s", (row["speaker_id"],)))
+    # аудиофайл на диске не трогаем — запись из базы убрана, клип при желании можно вернуть
+    return {"ok": True, "sample_id": sample_id, "speaker_id": row["speaker_id"],
+            "file_kept": row["path"],
+            "coherence": {r["id"]: r["coherence"] for r in items}, **stats(items)}
+
+
+# --- разметка: кандидаты, эталон из записи, переименование кластера ----------
+
+ANON_RE = r"^(s|speaker)[_ -]?([0-9]+|\?)$"
+
+
+@app.get("/api/enroll/candidates")
+def enroll_candidates(recording_id: int):
+    rec, src = rec_audio(recording_id)
+    segs = q("""SELECT id, start_sec, end_sec, text, confidence, speaker_name
+                FROM segments WHERE recording_id = %s ORDER BY start_sec""", (recording_id,))
+    names = {r["name"] for r in q("SELECT name FROM speakers")}
+    refs = known_refs()
+    groups = {}
+    for s in segs:
+        groups.setdefault(s["speaker_name"], []).append(s)
+    out = []
+    for label, items in groups.items():
+        items.sort(key=lambda x: (x["end_sec"] - x["start_sec"]), reverse=True)
+        top = [{k: s[k] for k in ("id", "start_sec", "end_sec", "text", "confidence")}
+               for s in items[:5]]
+        match, err = [], None
+        if src and refs and top:
+            try:
+                v = span_vec(top[0]["id"], src, top[0]["start_sec"], top[0]["end_sec"])
+                match = voice.top_matches(v, refs, 3)
+            except Exception as e:
+                err = str(e)[:200]
+        elif not src:
+            err = "аудио записи недоступно"
+        out.append({
+            "label": label,
+            "known": label in names,
+            "total_sec": round(sum(s["end_sec"] - s["start_sec"] for s in items), 1),
+            "count": len(items),
+            "top": top,
+            "match": match,
+            "match_error": err,
+        })
+    out.sort(key=lambda g: g["total_sec"], reverse=True)
+    return {"recording_id": recording_id, "title": rec["title"] or rec["filename"],
+            "has_audio": src is not None, "groups": out}
+
+
+@app.post("/api/enroll")
+def enroll(body: dict):
+    b = body or {}
+    try:
+        rec_id = int(b["recording_id"])
+        start = float(b["start_sec"])
+        end = float(b["end_sec"])
+    except Exception:
+        raise HTTPException(400, "recording_id, start_sec, end_sec are required")
+    name = str(b.get("speaker_name", "")).strip()
+    if not name:
+        raise HTTPException(400, "speaker_name is required")
+    dur = min(max(end - start, 0.0), voice.CLIP_MAX_SEC)
+    if dur < voice.CLIP_MIN_SEC:
+        raise HTTPException(400, "fragment is too short")
+    rec, src = rec_audio(rec_id)
+    if src is None:
+        raise HTTPException(404, "audio file not found")
+
+    sp = q1("SELECT id, name FROM speakers WHERE lower(name) = lower(%s)", (name,))
+    if sp is None:
+        if b.get("mode") != "new_speaker":
+            raise HTTPException(404, f"speaker '{name}' not found")
+        aliases = [str(a).strip() for a in b.get("aliases") or [] if str(a).strip()]
+        sp = q1("""INSERT INTO speakers (name, aliases) VALUES (%s, %s)
+                   ON CONFLICT (name) DO UPDATE SET aliases = EXCLUDED.aliases
+                   RETURNING id, name""", (name, aliases))
+
+    out_dir = Path(SPEAKERS_DIR) / voice.slug(sp["name"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    clip = out_dir / f"enroll_{int(time.time())}_{rec_id}.m4a"
+    try:
+        voice.cut(Path(src), start, dur, clip)
+        vec = voice.embed_span(clip, 0, dur)
+    except Exception as e:
+        if clip.exists():
+            clip.unlink()
+        raise HTTPException(500, f"cut/embed failed: {str(e)[:300]}")
+
+    row = q1("""INSERT INTO speaker_samples (speaker_id, path, kind, duration_sec, embedding, source)
+                VALUES (%s, %s, 'embed', %s, %s::vector, %s) RETURNING id""",
+             (sp["id"], str(clip), round(dur, 2), voice.vec_literal(vec),
+              f"enroll:rec{rec_id}@{start:.1f}"))
+    items = decorate(load_samples("WHERE speaker_id = %s", (sp["id"],)))
+    new = next((r for r in items if r["id"] == row["id"]), None)
+    return {
+        "ok": True, "speaker_id": sp["id"], "speaker_name": sp["name"],
+        "sample_id": row["id"], "path": str(clip),
+        "samples_total": len(items),
+        "coherence": new["coherence"] if new else None,
+        "match": voice.top_matches(vec, known_refs(), 3),
+        **stats(items),
+    }
+
+
+@app.post("/api/enroll/rename_cluster")
+def rename_cluster(body: dict):
+    b = body or {}
+    rec_id = b.get("recording_id")
+    src_label = str(b.get("from_label", ""))
+    to_name = str(b.get("to_name", "")).strip()
+    if rec_id is None or not src_label or not to_name:
+        raise HTTPException(400, "recording_id, from_label, to_name are required")
+    ids = [r["id"] for r in q(
+        "SELECT id FROM segments WHERE recording_id = %s AND speaker_name = %s",
+        (int(rec_id), src_label))]
+    if not ids:
+        return {"ok": True, "updated": 0, "conflicts_closed": 0}
+    sp = q1("SELECT id FROM speakers WHERE lower(name) = lower(%s)", (to_name,))
+
+    def run(c):
+        with c.transaction():
+            c.execute("UPDATE segments SET speaker_name = %s, speaker_id = %s WHERE id = ANY(%s)",
+                      (to_name, sp["id"] if sp else None, ids))
+            cur = c.execute("""UPDATE conflicts SET status = 'resolved', resolved_name = %s,
+                                      resolved_by = 'user', resolved_at = now()
+                               WHERE status = 'open' AND segment_id = ANY(%s) RETURNING id""",
+                            (to_name, ids))
+            return len(cur.fetchall())
+
+    closed = _run(run)
+    return {"ok": True, "updated": len(ids), "conflicts_closed": closed,
+            "speaker_id": sp["id"] if sp else None}
+
+
+@app.get("/api/enroll/suggestions")
+def suggestions():
+    unnamed = q(f"""
+        SELECT * FROM (
+          SELECT DISTINCT ON (s.recording_id, s.speaker_name)
+                 s.id, s.recording_id, s.start_sec, s.end_sec, s.text, s.speaker_name,
+                 s.confidence, coalesce(r.title, r.filename) AS rec_title
+          FROM segments s JOIN recordings r ON r.id = s.recording_id
+          WHERE s.end_sec - s.start_sec >= 6 AND s.speaker_name ~* '{ANON_RE}'
+          ORDER BY s.recording_id, s.speaker_name, (s.end_sec - s.start_sec) DESC
+        ) t ORDER BY (t.end_sec - t.start_sec) DESC LIMIT 30""")
+    enrich = q("""
+        SELECT * FROM (
+          SELECT DISTINCT ON (s.recording_id, s.speaker_name)
+                 s.id, s.recording_id, s.start_sec, s.end_sec, s.text, s.speaker_name,
+                 s.confidence, coalesce(r.title, r.filename) AS rec_title
+          FROM segments s JOIN recordings r ON r.id = s.recording_id
+          WHERE s.confidence BETWEEN 0.5 AND 0.75
+            AND s.speaker_name IN (SELECT name FROM speakers)
+            AND s.end_sec - s.start_sec >= 3
+          ORDER BY s.recording_id, s.speaker_name, (s.end_sec - s.start_sec) DESC
+        ) t ORDER BY t.confidence LIMIT 30""")
+    samples = decorate(load_samples())
+    names = {r["id"]: r["name"] for r in q("SELECT id, name FROM speakers")}
+    bad = [{**s, "speaker_name": names.get(s["speaker_id"])}
+           for s in samples
+           if s["is_active"] and s["coherence"] is not None and s["coherence"] < 0.5]
+    bad.sort(key=lambda s: s["coherence"])
+    return {"unnamed": unnamed, "enrich": enrich, "bad_samples": bad}
 
 
 @app.get("/api/speakers/sample/{sample_id}")

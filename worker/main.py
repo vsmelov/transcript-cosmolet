@@ -38,7 +38,12 @@ def artifact(recording_id: int, name: str, data: dict) -> str:
 
 
 def intake() -> None:
-    """Новые файлы из inbox -> запись в БД (аудио переезжает в data/audio, оно нам нужно)."""
+    """Новые файлы из inbox -> запись в БД (аудио переезжает в data/audio, оно нам нужно).
+
+    Рядом с аудио может лежать sidecar <файл>.meta.json (кладёт, например, fetch_plaud.py):
+    {"title": ..., "started_at": ISO, "source": ..., ...} — оттуда берём человеческое
+    название и время записи вместо голого имени файла.
+    """
     for f in sorted(config.INBOX.iterdir()) if config.INBOX.exists() else []:
         if not f.is_file() or f.suffix.lower() not in AUDIO_EXT:
             continue
@@ -48,14 +53,28 @@ def intake() -> None:
             log("не читается, в failed:", f.name, exc)
             shutil.move(str(f), config.FAILED / f.name)
             continue
+
+        sidecar = f.with_suffix(f.suffix + ".meta.json")
+        meta = {}
+        if sidecar.exists():
+            try:
+                meta = json.loads(sidecar.read_text(encoding="utf-8"))
+            except Exception:
+                meta = {}
+
         dest = config.AUDIO / f.name
         if dest.exists():
             dest = config.AUDIO / f"{f.stem}_{int(time.time())}{f.suffix}"
         shutil.move(str(f), dest)
-        db.q("""INSERT INTO recordings (filename, source, audio_path, duration_sec, size_bytes, status)
-                VALUES (%s,'inbox',%s,%s,%s,'new')""",
-             dest.name, str(dest), dur, dest.stat().st_size)
-        log("принят:", dest.name, f"{dur/60:.1f} мин")
+        sidecar.unlink(missing_ok=True)
+
+        title = meta.get("title") or dest.stem.replace("_", " ")
+        db.q("""INSERT INTO recordings
+                (filename, title, source, audio_path, duration_sec, size_bytes, started_at, status, meta)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,'new',%s::jsonb)""",
+             dest.name, title, meta.get("source", "inbox"), str(dest), dur,
+             dest.stat().st_size, meta.get("started_at"), json.dumps(meta, ensure_ascii=False))
+        log("принят:", title, f"({dur/60:.1f} мин)")
 
 
 def stage_draft(rec_id: int, src: Path, dur: float) -> dict:
