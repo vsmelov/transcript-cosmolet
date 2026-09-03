@@ -139,9 +139,24 @@ body.bulk main{padding-bottom:110px}
 .bar>i{display:block;height:100%;background:var(--green)}
 .card.wide{width:100%}
 svg text{font-family:inherit}
+
+/* Всплывающие уведомления: операции идут в фоне (пересчёт опознания — минуты),
+   и без них непонятно, случилось ли вообще что-нибудь после нажатия. */
+#toasts{position:fixed;right:16px;bottom:16px;z-index:9999;display:flex;
+  flex-direction:column;gap:8px;max-width:min(380px,90vw)}
+#toasts .toast{background:var(--card,#1c2128);border:1px solid var(--line,#30363d);
+  border-left:3px solid var(--blue,#58a6ff);border-radius:6px;padding:10px 12px;
+  box-shadow:0 6px 20px rgba(0,0,0,.45);font-size:13px;line-height:1.35;
+  animation:toastIn .18s ease-out}
+#toasts .toast.ok{border-left-color:var(--green,#3fb950)}
+#toasts .toast.err{border-left-color:var(--red,#f85149)}
+#toasts .toast.go{opacity:0;transform:translateY(6px);transition:.25s}
+#toasts .toast b{display:block;margin-bottom:2px}
+@keyframes toastIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 </style>
 </head>
 <body>
+<div id="toasts"></div>
 <header>
   <div class="hrow">
     <h1>cosmolet</h1>
@@ -195,7 +210,10 @@ svg text{font-family:inherit}
       <button data-vsec="unknown">Кого не хватает</button>
     </div>
     <div id="vsec-people" class="vsec" style="display:flex;gap:16px;align-items:flex-start">
-      <div id="peopleList" style="flex:0 0 250px"><div class="dim">загрузка…</div></div>
+      <div style="flex:0 0 250px">
+        <div id="unkCount" style="margin-bottom:6px"></div>
+        <div id="peopleList"><div class="dim">загрузка…</div></div>
+      </div>
       <div id="personCard" style="flex:1;min-width:0"><div class="dim">выберите человека слева</div></div>
     </div>
     <div id="vsec-enroll" class="vsec" style="display:none">
@@ -1293,6 +1311,47 @@ function seekPlay(t){
   $('playHint').style.display = 'none';
 }
 
+// Уведомление в углу: живёт заданное время, само уезжает. Возвращает узел,
+// чтобы долгую операцию можно было потом закрыть или заменить результатом.
+function toast(title, text, kind, ms){
+  const box = $('toasts');
+  if (!box) return null;
+  const el = document.createElement('div');
+  el.className = 'toast' + (kind ? ' ' + kind : '');
+  el.innerHTML = `<b>${esc(title)}</b>${text ? esc(text) : ''}`;
+  box.appendChild(el);
+  const kill = () => { el.classList.add('go'); setTimeout(() => el.remove(), 260); };
+  if (ms !== 0) setTimeout(kill, ms || 5000);
+  el.addEventListener('click', kill);
+  return {el, kill, set(title, text, kind){
+    el.className = 'toast' + (kind ? ' ' + kind : '');
+    el.innerHTML = `<b>${esc(title)}</b>${text ? esc(text) : ''}`;
+    setTimeout(kill, 6000);
+  }};
+}
+
+// Ждём, пока запись пройдёт конвейер, и говорим об этом. Пересчёт опознания
+// занимает минуты и идёт в воркере — без слежения кнопка выглядит мёртвой.
+async function watchRecording(rid, t){
+  const started = Date.now();
+  while (Date.now() - started < 20 * 60000){
+    await new Promise(r => setTimeout(r, 4000));
+    let rec;
+    try { rec = await api('/api/recordings/' + rid); } catch (e) { continue; }
+    const st = rec.status;
+    if (st === 'done'){
+      t.set('Готово', `Запись #${rid}: голоса разделены заново.`, 'ok');
+      if (VSEC === 'enroll' && ERID === rid){ await loadCandidates(rid); loadJoinScan(rid); }
+      return;
+    }
+    if (st === 'failed'){ t.set('Не получилось', `Запись #${rid} упала, смотрите Jobs.`, 'err'); return; }
+    t.set('Пересчитываю…', `Запись #${rid}: ${STATUS_RU[st] || st}`, null);
+  }
+}
+const STATUS_RU = {transcribed: 'ждёт очереди на опознание', resolving: 'идёт опознание голосов',
+                   detected: 'ждёт транскрипции', transcribing: 'идёт транскрипция',
+                   new: 'ждёт детектора речи', detecting: 'идёт детектор речи'};
+
 function showHint(t){
   PEND_T = t;
   if (t == null || !TR_AUDIO){ $('playHint').style.display = 'none'; return; }
@@ -1364,7 +1423,10 @@ async function loadUnknown(){
         <button class="act" data-act="goto"
           data-h="voices/enroll/${s.recording_id}?spk=${encodeURIComponent(g.labels[0].split(' ')[1] || '')}">
           разметить эту запись →</button>
-        ${g.likely_known ? '' : `<button class="act" data-act="unknew" data-i="${i}">+ завести человека</button>`}
+        <button class="act" data-act="unknew" data-i="${i}"
+          title="${g.likely_known
+            ? `Система думает, что это ${esc(g.closest[0].name)}, но она может ошибаться: похожие голоса дают высокую близость. Если на слух это другой человек — заводите его, ваше решение главнее.`
+            : 'Завести нового человека и разметить его голос на записи.'}">+ завести человека</button>
       </div>
     </div>`;
   }).join('');
@@ -1372,7 +1434,24 @@ async function loadUnknown(){
 }
 let UNK = [];
 
+// Сколько голосов ещё без имени — подсказка прямо в списке людей: иначе кажется,
+// что кроме заведённых в базе никого нет, хотя неопознанные копятся.
+async function loadUnknownCount(){
+  try {
+    const d = await api('/api/speakers/unknown');
+    const el = $('unkCount');
+    if (!el) return;
+    const mins = d.groups.reduce((a, g) => a + g.minutes, 0).toFixed(0);
+    el.innerHTML = d.groups.length
+      ? `<button class="lnk" data-act="goto" data-h="voices/unknown"
+           title="Голоса, которые много говорят, но не заведены в базе">
+           ещё ${d.groups.length} голосов без имени (${mins} мин) →</button>`
+      : '';
+  } catch (e) {}
+}
+
 async function loadPeople(){
+  loadUnknownCount();
   try { VPEOPLE = await api('/api/speakers'); }
   catch (e) { fail($('peopleList'), e); return; }
   $('peopleList').innerHTML = VPEOPLE.length ? VPEOPLE.map(p => `
@@ -1454,12 +1533,18 @@ async function loadJoinScan(rid){
       ${d.anchors} опорных. Чем выше порог, тем строже разделение.</div>` +
     d.scan.map(r => {
       const who = r.people.map(p => `<span style="color:${p.sure ? 'var(--green)' : 'var(--dim)'}"
-        title="${p.sure ? 'опознан уверенно' : 'похож, но недостаточно уверенно'}">${esc(p.name)} ${p.cos}
+        title="${p.sure
+          ? `Голос этой группы уверенно совпал с эталонами: близость ${p.cos} и заметный отрыв от второго кандидата. Имя проставится само.`
+          : `Ближе всего ${p.name} (${p.cos}), но для автоматического имени этого мало: нужна близость 0.70 и отрыв 0.15 от второго кандидата. Такую группу придётся подтвердить руками.`}
+Всего речи в группе: ${p.minutes} мин.">${esc(p.name)} ${p.cos}
         <span class="dim">(${p.minutes}м)</span></span>`).join(' · ') || '<span class="dim">никого не узнали</span>';
       return `<div class="prow" style="align-items:baseline">
         <span class="nm">${r.join}${r.join === best.join ? ' ★' : ''}</span>
         <span style="flex:1">${who}</span>
-        <span class="num">${r.clusters} голосов · опознано ${r.named_min} мин</span>
+        <span class="num"><span title="Сколько разных голосов выделилось при этом пороге. Считаются группы длиннее 30 секунд — короткие обрывки не показываем.">${r.clusters} голосов</span>
+          · <span title="Сколько минут речи получают имя АВТОМАТИЧЕСКИ: сумма по группам, которые уверенно совпали с эталонами из базы (близость от 0.70 и отрыв от второго кандидата от 0.15).
+Это ровно та часть записи, которую не придётся размечать руками — поэтому по ней и выбирается лучший порог.
+Остальная речь не пропадает: она попадёт в транскрипт под именем вида S1, и вы назначите ей человека сами.">опознано ${r.named_min} мин</span></span>
         <button class="act" data-act="setjoin" data-rid="${rid}" data-join="${r.join}"
           title="Запомнить порог ${r.join} для этой записи и заново разделить голоса.
 Локально и бесплатно, обычно пара минут. Транскрипт и границы реплик не меняются — только кто их сказал.
@@ -1468,7 +1553,8 @@ async function loadJoinScan(rid){
     }).join('') +
     `<div class="rsrow"><button class="act" data-act="setjoin" data-rid="${rid}" data-join="">
       вернуть автоподбор</button>
-      <span class="dim" style="font-size:12px">★ — выбор автоподбора: больше всего уверенно опознанной речи</span></div>`;
+      <span class="dim" style="font-size:12px"
+        title="Автоподбор берёт порог, при котором автоматически получает имя наибольшая часть речи. При равенстве выбирается порог повыше: разделить лишнего безопаснее, чем слепить двух людей — слипшихся расклеивать вручную по репликам, а лишнее дробление закрывается парой подтверждений.">★ — выбор автоподбора: больше всего уверенно опознанной речи</span></div>`;
 }
 
 async function loadCandidates(rid){
@@ -1834,9 +1920,14 @@ document.addEventListener('click', async e => {
       else if (a === 'goto') await go(b.dataset.h, true, true);
       else if (a === 'setjoin'){
         const j = b.dataset.join === '' ? null : +b.dataset.join;
-        await api(`/api/recordings/${b.dataset.rid}/join`, {method:'POST', body:{join: j}});
-        showHint((j == null ? 'вернул автоподбор' : `порог ${j}`) +
-          ' — заново разделяю голоса, это займёт пару минут; подтверждения сохранены');
+        const rid = +b.dataset.rid;
+        const t = toast(j == null ? 'Вернул автоподбор' : `Порог ${j} применён`,
+          'Заново разделяю голоса — это займёт пару минут. Ваши подтверждения и эталоны сохранены.',
+          null, 0);
+        try {
+          await api(`/api/recordings/${rid}/join`, {method:'POST', body:{join: j}});
+        } catch (e) { t.set('Не удалось применить', errText(e), 'err'); return; }
+        watchRecording(rid, t);
       }
       else if (a === 'vabout'){
         const t = $('aboutBox').value;
