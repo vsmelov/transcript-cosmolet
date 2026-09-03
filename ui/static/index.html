@@ -32,7 +32,7 @@ tr[data-act]:hover td{background:var(--panel)}
 .st-download{color:var(--yellow);border-color:var(--yellow)}
 .badge.src{color:var(--dim);text-transform:lowercase}
 .badge.src-plaud{color:var(--acc);border-color:var(--acc)}
-button.act{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:3px 10px;cursor:pointer;font:inherit;font-size:12px}
+button.act,a.act{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:3px 10px;cursor:pointer;font:inherit;font-size:12px;text-decoration:none;display:inline-block}
 button.act:hover{border-color:var(--acc)}
 button.act.playing{border-color:var(--acc);background:rgba(122,162,247,.18);color:var(--acc)}
 button.act:disabled,button.act[disabled]{opacity:.4;cursor:not-allowed;border-color:var(--border)}
@@ -190,7 +190,7 @@ svg text{font-family:inherit}
     <div id="trList"><div class="dim">загрузка…</div></div>
     <div id="trWrap" style="display:none">
       <div class="rsrow" style="margin-top:0">
-        <button class="act" data-act="goto" data-h="transcript">← к списку</button>
+        <a class="act" data-act="goto" href="#transcript">← к списку</a>
       </div>
       <div id="trHead"></div>
       <div id="playHint" style="display:none;margin:6px 0">
@@ -1195,8 +1195,8 @@ async function loadDetail(id){
       d.has_audio ? '' : (d.audio_path ? ' · <span class="errtxt">аудиофайла нет на диске</span>' : ' · аудио удалено')}</div>
     <div class="pipe">${pipe}</div>
     <div class="rsrow">${rep}
-      <button class="act" data-act="goto" data-h="transcript/${id}">транскрипт →</button>
-      <button class="act" data-act="goto" data-h="voices/enroll/${id}">разметить голоса →</button></div>`;
+      <a class="act" data-act="goto" href="#transcript/${id}">транскрипт →</a>
+      <a class="act" data-act="goto" href="#voices/enroll/${id}">разметить голоса →</a></div>`;
 }
 
 function stageCard(j){
@@ -1440,9 +1440,8 @@ async function loadUnknown(){
       <div class="rsrow" style="margin-top:6px">
         <button class="act" data-act="unkplay" data-rid="${s.recording_id}"
           data-start="${s.start}" data-end="${s.end}">▶ послушать</button>
-        <button class="act" data-act="goto"
-          data-h="voices/enroll/${s.recording_id}?spk=${encodeURIComponent(g.labels[0].split(' ')[1] || '')}">
-          разметить эту запись →</button>
+        <a class="act" data-act="goto" href="#voices/enroll/${s.recording_id}?spk=${encodeURIComponent(g.labels[0].split(' ')[1] || '')}">
+          разметить эту запись →</a>
         <button class="act" data-act="unknew" data-i="${i}"
           title="${g.likely_known
             ? `Система думает, что это ${esc(g.closest[0].name)}, но она может ошибаться: похожие голоса дают высокую близость. Если на слух это другой человек — заводите его, ваше решение главнее.`
@@ -1463,9 +1462,9 @@ async function loadUnknownCount(){
     if (!el) return;
     const mins = d.groups.reduce((a, g) => a + g.minutes, 0).toFixed(0);
     el.innerHTML = d.groups.length
-      ? `<button class="lnk" data-act="goto" data-h="voices/unknown"
+      ? `<a class="lnk" data-act="goto" href="#voices/unknown"
            title="Голоса, которые много говорят, но не заведены в базе">
-           ещё ${d.groups.length} голосов без имени (${mins} мин) →</button>`
+           ещё ${d.groups.length} голосов без имени (${mins} мин) →</a>`
       : '';
   } catch (e) {}
 }
@@ -1490,7 +1489,7 @@ async function loadFast(rid){
         <span class="nm" style="flex:1">#${r.id} · ${esc(r.title || r.filename)}</span>
         <span class="num">без имени <b style="color:var(--yellow)">${r.unnamed_min} мин</b>
           · спорных ${r.ambiguous} · реплик ${r.segments}</span>
-        <button class="act" data-act="goto" data-h="voices/fast/${r.id}">разобрать →</button>
+        <a class="act" data-act="goto" href="#voices/fast/${r.id}">разобрать →</a>
       </div>`).join('');
     return;
   }
@@ -1501,9 +1500,9 @@ async function loadFast(rid){
   FAST = d; ERID = rid;
   const groups = d.groups.filter(g => g.total_sec >= 20);
   box.innerHTML = `<div class="rsrow" style="margin-top:0">
-      <button class="act" data-act="goto" data-h="voices/fast">← к списку записей</button>
+      <a class="act" data-act="goto" href="#voices/fast">← к списку записей</a>
       <b style="flex:1">#${rid} · ${esc(d.title)}</b>
-      <button class="act" data-act="goto" data-h="voices/enroll/${rid}">подробный разбор →</button>
+      <a class="act" data-act="goto" href="#voices/enroll/${rid}">подробный разбор →</a>
     </div>` + groups.map((g, i) => {
     const named = !/^S[0-9?]/.test(g.label);
     const m = g.match || [];
@@ -1631,7 +1630,7 @@ function renderPerson(){
     </div>
     <table style="margin-top:8px"><thead><tr><th></th><th>длит.</th><th>вид</th><th>источник</th><th>coh</th><th>статус</th><th></th></tr></thead>
       <tbody>${rows || '<tr><td colspan="7" class="dim">сэмплов нет</td></tr>'}</tbody></table>
-    <div class="rsrow"><button class="act" data-act="goto" data-h="voices/enroll">+ добавить эталон из записи</button></div>`;
+    <div class="rsrow"><a class="act" data-act="goto" href="#voices/enroll">+ добавить эталон из записи</a></div>`;
 }
 
 // ---------- Голоса: разметка записи ----------
@@ -1799,8 +1798,8 @@ async function loadSugg(){
   try { d = await api('/api/enroll/suggestions'); } catch (e) { fail($('suggBody'), e); return; }
   // экран 3: те же карточки фраз; отличается только подпись сверху и что предлагается
   const head = s => `запись #${s.recording_id} «${esc(s.rec_title)}» · ${fmtT(s.start_sec)}–${fmtT(s.end_sec)} ` +
-    `<button class="lnk" data-act="goto" data-h="voices/enroll/${s.recording_id}"
-       title="уйти на экран разметки этой записи — там видно все фрагменты кластера">разметка записи ↗</button>`;
+    `<a class="lnk" data-act="goto" href="#voices/enroll/${s.recording_id}"
+       title="уйти на экран разметки этой записи — там видно все фрагменты кластера">разметка записи ↗</a>`;
 
   const unnamed = d.unnamed.map(s => renderUtterance(s, {
     card: true, always: true, context: head(s), cluster: s.speaker_name})).join('');
@@ -1949,8 +1948,8 @@ function confHtml(c){
     card: true, always: true, cid: c.conflict_id, link: 'conflicts/' + c.conflict_id,
     context: `конфликт #${c.conflict_id} · ${esc(reasonTxt(c.reason))} · запись #${c.recording_id}` +
       (c.rec_title ? ` «${esc(c.rec_title)}»` : '') +
-      ` <button class="lnk" data-act="goto" data-h="transcript/${c.recording_id}/seg/${c.id}"
-          title="открыть эту реплику в ленте транскрипта">в транскрипте ↗</button>`});
+      ` <a class="lnk" data-act="goto" href="#transcript/${c.recording_id}/seg/${c.id}"
+          title="открыть эту реплику в ленте транскрипта">в транскрипте ↗</a>`});
 }
 
 function spCard(p){
@@ -2065,7 +2064,14 @@ document.addEventListener('click', async e => {
         return;
       }
       if (a === 'link') await copyLink(b.dataset.h, b);
-      else if (a === 'goto') await go(b.dataset.h, true, true);
+      else if (a === 'goto'){
+        // Ctrl/Shift/Cmd и средний клик не перехватываем: это запрос открыть в новой
+        // вкладке, и ссылка href="#..." даёт браузеру сделать это самому
+        if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) return;
+        e.preventDefault();
+        // ссылки несут адрес в href, а кликабельные строки таблиц — в data-h
+        await go((b.getAttribute('href') || '').replace(/^#/, '') || b.dataset.h, true, true);
+      }
       else if (a === 'setjoin'){
         const j = b.dataset.join === '' ? null : +b.dataset.join;
         const rid = +b.dataset.rid;
