@@ -892,7 +892,12 @@ function renderCandidates(){
           ${t.confidence != null ? `<span class="badge" style="color:${cohCol(t.confidence)}" title="уверенность в спикере">${(+t.confidence).toFixed(2)}</span>` : ''}
           ${t.ambiguous ? `<span class="badge bad" title="${esc(t.reason || 'неуверенно')}">спорный</span>
             <button class="act" data-act="econf" data-seg="${t.id}" data-i="${i}"
-              title="подтвердить: это ${esc(g.label)} — фрагмент станет эталоном">✓ это ${esc(g.label)}</button>` : ''}
+              title="да, это ${esc(g.label)} — фрагмент станет эталоном голоса">✓ это ${esc(g.label)}</button>
+            <select data-role="other" style="max-width:150px"><option value="">— другой человек —</option>${optList()}</select>
+            <button class="act" data-act="eother" data-seg="${t.id}"
+              title="эта реплика принадлежит другому человеку — переназначить и сделать его эталоном">→</button>
+            <button class="act" data-act="enoise" data-seg="${t.id}"
+              title="шум/фон/чужой разговор — пометить и не эталонить">🗑</button>` : ''}
           <span class="txt">${esc(t.text)}</span>
         </div>`).join('') || '<span class="dim">фрагментов нет</span>'}
         ${g.top.length > 8 ? `<button class="act" data-act="vmore" data-i="${i}">показать все ${g.top.length}</button>` : ''}</div>
@@ -968,7 +973,8 @@ async function loadSugg(){
         <select data-role="who"><option value="">— кто это? —</option>${optList()}</select>
         <button class="act" data-act="sname" data-rid="${s.recording_id}" data-label="${esc(s.speaker_name)}" data-s="${s.start_sec}" data-e="${s.end_sec}"
           title="переименует ВСЕ реплики ${esc(s.speaker_name)} в этой записи и запомнит голос для будущих записей">применить ко всем «${esc(s.speaker_name)}» в записи</button>
-        <button class="act" data-act="goto" data-h="voices/enroll/${s.recording_id}">разметить запись →</button>
+        <button class="lnk" data-act="goto" data-h="voices/enroll/${s.recording_id}"
+          title="уйти на экран разметки этой записи — там видно все фрагменты кластера">открыть разметку записи ↗</button>
         ${linkBtn('transcript/' + s.recording_id + '/seg/' + s.id)}</div>
       <div class="eres sub" style="margin-top:6px"></div></div>`).join('');
 
@@ -1202,24 +1208,42 @@ document.addEventListener('click', async e => {
       else if (a === 'person') await openPerson(+b.dataset.id, true);
       else if (a === 'vplay') playSample(b.dataset.sid, b, b.dataset.who);
       else if (a === 'vspan') playSpan(b.dataset.rid, b.dataset.s, b.dataset.e, b);
-      else if (a === 'econf'){
-        // подтверждение спорного фрагмента: он становится эталоном голоса
-        const g = ECAND.groups[+b.dataset.i];
+      else if (a === 'econf' || a === 'eother' || a === 'enoise'){
+        // решение по одной спорной реплике: подтвердить / отдать другому / в шум
+        const row = b.closest('.frag');
+        let name;
+        if (a === 'econf') name = ECAND.groups[+b.dataset.i].label;
+        else if (a === 'enoise') name = '[noise]';
+        else {
+          const sel = row && row.querySelector('[data-role="other"]');
+          name = sel && sel.value;
+          if (!name){ alert('выберите человека в списке рядом'); return; }
+        }
         const old = b.innerHTML;
-        b.disabled = true; b.innerHTML = 'добавляю…';
+        b.disabled = true; b.innerHTML = '…';
         try {
           const r = await api('/api/enroll/confirm_segment', {method:'POST',
-            body:{segment_id: +b.dataset.seg, name: g.label}});
-          b.innerHTML = '✓ в эталонах';
-          b.classList.remove('act'); b.style.color = 'var(--green)';
-          const row = b.closest('.frag');
-          if (row){ row.classList.remove('amb'); const bad = row.querySelector('.badge.bad'); if (bad) bad.remove(); }
+            body:{segment_id: +b.dataset.seg, name}});
+          if (row){
+            row.classList.remove('amb');
+            const bad = row.querySelector('.badge.bad'); if (bad) bad.remove();
+            row.querySelectorAll('[data-act="econf"],[data-act="eother"],[data-act="enoise"],[data-role="other"]')
+               .forEach(el => el.remove());
+            const mark = document.createElement('span');
+            mark.className = 'badge';
+            mark.style.color = a === 'enoise' ? 'var(--dim)' : 'var(--green)';
+            mark.textContent = a === 'enoise' ? '🗑 шум' : '✓ ' + name;
+            row.insertBefore(mark, row.querySelector('.txt'));
+          }
           const res = card ? card.querySelector('.eres') : null;
-          if (res){
+          if (res && !r.noise){
             res.style.color = 'var(--green)';
-            res.textContent = `эталонов у ${g.label}: ${r.samples_total}` +
+            res.textContent = `эталонов у ${name}: ${r.samples_total}` +
               (r.coherence != null ? ` · когерентность нового ${(+r.coherence).toFixed(2)}` : '') +
               ` · матч: ${(r.match || []).map(m => m.name + ' ' + (+m.cos).toFixed(2)).join(' · ')}`;
+          } else if (res){
+            res.style.color = 'var(--dim)';
+            res.textContent = 'реплика помечена как шум/фон, эталон не создан';
           }
           loadPeople().catch(() => {});
         } catch (e){

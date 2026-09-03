@@ -1,4 +1,4 @@
-"""Воркер cosmolet: очередь папок -> черновик -> качество -> опознание -> хранение.
+"""Воркер cosmolet: очередь папок -> детектор речи -> качество -> опознание -> хранение.
 
 Каждый этап пишет job в БД (телеметрия для UI) и json-артефакт в data/artifacts/.
 Бюджетный предохранитель: как только расход за сутки достигает DAILY_BUDGET_USD,
@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import tempfile
 import time
 import traceback
 from pathlib import Path
@@ -18,7 +19,7 @@ import config
 import db
 import diarize
 import embed as embed_mod
-import speechmap
+import detect
 import store
 
 AUDIO_EXT = {".m4a", ".mp3", ".wav", ".ogg", ".oga", ".opus", ".webm", ".flac", ".mp4", ".mov"}
@@ -95,31 +96,26 @@ def intake() -> None:
         log("принят:", title, f"({dur/60:.1f} мин)")
 
 
-def stage_draft(rec_id: int, src: Path, dur: float) -> dict:
-    """Черновик по всему файлу (whisper-turbo) -> карта речи."""
-    job = db.job_start(rec_id, "draft")
+def stage_detect(rec_id: int, src: Path, dur: float) -> dict:
+    """Карта речи локально и бесплатно: Silero VAD + классификатор аудио-событий.
+
+    Пришёл на смену платному whisper-черновику: дешевле (ноль), честнее на тишине
+    (whisper там галлюцинировал) и отличает речь от речеподобного шума в кармане.
+    """
+    job = db.job_start(rec_id, "detect")
     try:
-        cost_total = 0.0
-        parts, pos = [], 0.0
-        while pos < dur:
-            take = min(config.QUALITY_CHUNK_SEC, dur - pos)
-            tmp = config.IN_PROGRESS / f"draft_{rec_id}_{int(pos)}{src.suffix}"
-            audio_mod.cut(src, pos, take, tmp)
-            resp, cost = clients.draft_transcribe(tmp)
-            tmp.unlink(missing_ok=True)
-            cost_total += cost
-            db.add_cost(cost, "draft", config.DRAFT_MODEL, rec_id, f"offset={pos:.0f}")
-            for s in resp.get("segments") or []:
-                s["start"] = float(s.get("start", 0)) + pos
-                s["end"] = float(s.get("end", 0)) + pos
-                parts.append(s)
-            pos += take
-        smap = speechmap.build({"segments": parts}, dur)
-        path = artifact(rec_id, "draft", {"speech_map": smap, "segments": parts})
-        db.job_done(job, cost_total, path, {"speech_sec": smap["speech_sec"]})
-        log(f"черновик: речь {smap['speech_sec']}с из {smap['total_sec']}с, ${cost_total:.4f}")
+        with tempfile.TemporaryDirectory(prefix="detect_") as td:
+            wav = Path(td) / "full.wav"
+            audio_mod.to_wav16k(src, wav)
+            smap = detect.detect(wav, dur)
+        path = artifact(rec_id, "detect", {"speech_map": smap})
+        db.job_done(job, 0.0, path, {"speech_sec": smap["speech_sec"],
+                                     "vad_sec": smap["vad_sec"]})
+        log(f"детектор: VAD {smap['vad_sec']}с -> речь {smap['speech_sec']}с "
+            f"из {smap['total_sec']:.0f}с ({smap['speech_sec']/max(dur,1)*100:.1f}%), "
+            f"шум отброшен: {smap['dropped_by_tagger_sec']}с")
         return smap
-    except Exception as exc:
+    except Exception:
         db.job_fail(job, traceback.format_exc())
         raise
 
@@ -199,18 +195,18 @@ def process(rec) -> None:
     if isinstance(meta, str):
         meta = json.loads(meta)
     # переигрывание с этапа: артефакты предыдущих этапов уже оплачены и лежат на диске
-    from_stage = meta.get("reprocess_from") or "draft"
+    from_stage = meta.get("reprocess_from") or "detect"
     log(f"=== запись #{rec_id} {filename} ({dur/60:.1f} мин)" +
-        (f" [переигрываем с {from_stage}]" if from_stage != "draft" else ""))
+        (f" [переигрываем с {from_stage}]" if from_stage != "detect" else ""))
     db.q("UPDATE recordings SET status='processing', meta = meta - 'reprocess_from' WHERE id=%s", rec_id)
     try:
         if from_stage in ("quality", "resolve"):
-            cached = load_artifact(rec_id, "draft")
+            cached = load_artifact(rec_id, "detect")
             if not cached:
-                raise RuntimeError("нет артефакта draft — переиграть можно только с draft")
+                raise RuntimeError("нет артефакта detect — переиграть можно только с detect")
             smap = cached["speech_map"]
         else:
-            smap = stage_draft(rec_id, audio_path, dur)
+            smap = stage_detect(rec_id, audio_path, dur)
 
         if from_stage == "resolve":
             cached = load_artifact(rec_id, "quality")
@@ -248,8 +244,8 @@ def recover_zombies() -> None:
     for rec_id in sorted({r[0] for r in rows}):
         # с какого этапа продолжать: всё, что уже оплачено и лежит в артефактах,
         # переигрывать нельзя — это повторные деньги за ту же работу
-        stage = "draft"
-        if load_artifact(rec_id, "draft"):
+        stage = "detect"
+        if load_artifact(rec_id, "detect"):
             stage = "quality"
         if load_artifact(rec_id, "quality"):
             stage = "resolve"

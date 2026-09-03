@@ -556,8 +556,10 @@ def confirm_segment(body: dict):
     if seg is None:
         raise HTTPException(404, "segment not found")
 
-    res = enroll({"recording_id": seg["recording_id"], "start_sec": seg["start_sec"],
-                  "end_sec": seg["end_sec"], "speaker_name": name})
+    # шум/фон эталоном не делаем — только переклеиваем метку у реплики
+    res = {"noise": True} if name == "[noise]" else enroll(
+        {"recording_id": seg["recording_id"], "start_sec": seg["start_sec"],
+         "end_sec": seg["end_sec"], "speaker_name": name})
 
     def run(c):
         with c.transaction():
