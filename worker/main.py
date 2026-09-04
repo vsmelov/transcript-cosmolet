@@ -15,6 +15,8 @@ import time
 import traceback
 from pathlib import Path
 
+import signal
+
 import audio as audio_mod
 import clients
 import config
@@ -32,6 +34,23 @@ _SIZES: dict[str, int] = {}   # имя -> размер на прошлом пр�
 
 def log(*a):
     print(time.strftime("[%H:%M:%S]"), *a, flush=True)
+
+
+# Мягкая остановка. Раньше рестарт убивал контейнер на полуслове, и незавершённые
+# этапы помечались «прервано рестартом воркера»: детектор одиннадцатичасовой записи
+# терял двадцать минут счёта из-за правки в чужом файле. Теперь по сигналу воркер
+# перестаёт БРАТЬ новую работу, а начатую доводит до конца.
+STOPPING = False
+
+
+def _stop(signum, frame):
+    global STOPPING
+    STOPPING = True
+    log("получен сигнал остановки: новую работу не берём, текущую доводим до конца")
+
+
+signal.signal(signal.SIGTERM, _stop)
+signal.signal(signal.SIGINT, _stop)
 
 
 def artifact(recording_id: int, name: str, data: dict) -> str:
@@ -275,7 +294,7 @@ def stage_loop(stage: str, num: int) -> None:
             os.nice(config.WORKER_NICE)
         except OSError:
             pass
-    while True:
+    while not STOPPING:
         try:
             # бюджет стережём только на платных этапах: детектор бесплатный и
             # должен продолжать готовить работу, даже когда деньги на сегодня кончились
@@ -301,17 +320,22 @@ def stage_loop(stage: str, num: int) -> None:
             time.sleep(30)
 
 
-def recover_zombies() -> None:
+def recover_zombies(role: str = "all") -> None:
     """После рестарта контейнера незавершённые джобы висят в running навсегда.
 
     Помечаем их прерванными, а записи возвращаем в очередь ТОГО этапа, до которого
     они реально дошли: всё, что уже оплачено и лежит в артефактах, не переигрываем.
     """
+    # Чужие этапы не трогаем: их контейнеры сейчас работают, и их running-джобы
+    # живые. Раньше любой рестарт помечал прерванным вообще всё.
+    mine = ["detect", "quality", "resolve"] if role == "all" else [role]
     db.q("""UPDATE jobs SET status='failed', finished_at=now(),
             error=COALESCE(error,'') || ' [прервано рестартом воркера]'
-            WHERE status='running'""")
-    stuck = db.q("""SELECT id FROM recordings
-                    WHERE status IN ('detecting','transcribing','resolving','processing')""") or []
+            WHERE status='running' AND stage = ANY(%s)""", mine)
+    busy_statuses = [STAGES[st]["busy"] for st in mine if st in STAGES]
+    if role == "all":
+        busy_statuses.append("processing")
+    stuck = db.q("""SELECT id FROM recordings WHERE status = ANY(%s)""", busy_statuses) or []
     for (rec_id,) in stuck:
         stage = "detect"
         if load_artifact(rec_id, "detect"):
@@ -320,11 +344,12 @@ def recover_zombies() -> None:
             stage = "resolve"
         db.q("UPDATE recordings SET status=%s WHERE id=%s", REPROCESS_STATUS[stage], rec_id)
         log(f"после рестарта запись #{rec_id} возвращена в очередь этапа {stage}")
-    # скачивание прервалось на полпути — .part докачивать нечем, начинаем файл заново
-    back = db.q("""UPDATE recordings SET status='pending_download'
-                   WHERE status='downloading' RETURNING id""") or []
-    if back:
-        log(f"возвращено в очередь скачивания после рестарта: {len(back)}")
+    if role in ("all", "download"):
+        # скачивание прервалось на полпути — .part докачивать нечем, начинаем заново
+        back = db.q("""UPDATE recordings SET status='pending_download'
+                       WHERE status='downloading' RETURNING id""") or []
+        if back:
+            log(f"возвращено в очередь скачивания после рестарта: {len(back)}")
 
 
 def main() -> None:
@@ -333,26 +358,42 @@ def main() -> None:
         d.mkdir(parents=True, exist_ok=True)
     db.wait_ready(log=log)
     log("воркер запущен, бюджет/день:", config.DAILY_BUDGET_USD)
-    recover_zombies()
+    # Каждый этап живёт в своём контейнере (см. docker-compose): правка кода
+    # опознания не должна ронять детектор и транскрипцию, которые в этот момент
+    # считают часами. Роль задаётся переменной WORKER_ROLE.
+    role = config.WORKER_ROLE
+    recover_zombies(role)
     pools = {"detect": config.DETECT_WORKERS, "quality": config.QUALITY_WORKERS,
              "resolve": config.RESOLVE_WORKERS}
+    started = []
     for stage, n in pools.items():
+        if role not in ("all", stage):
+            continue
         for i in range(max(1, n)):
             threading.Thread(target=stage_loop, args=(stage, i + 1), daemon=True).start()
-    if config.PLAUD_SYNC_ENABLED:
+        started.append(f"{stage} x{n}")
+    if role in ("all", "download") and config.PLAUD_SYNC_ENABLED:
         threading.Thread(target=sync.sync_loop, args=(log,), daemon=True).start()
         for i in range(max(1, config.DOWNLOAD_WORKERS)):
             threading.Thread(target=sync.downloader_loop, args=(i + 1, log), daemon=True).start()
-    log("пулы: скачивание %d, детектор %d, транскрипт %d, опознание %d" % (
-        config.DOWNLOAD_WORKERS, config.DETECT_WORKERS,
-        config.QUALITY_WORKERS, config.RESOLVE_WORKERS))
-    while True:
+        started.append(f"скачивание x{config.DOWNLOAD_WORKERS}")
+    log(f"роль «{role}», пулы: " + ", ".join(started))
+    while not STOPPING:
         try:
-            intake()
+            if role in ("all", "download"):
+                intake()
             time.sleep(POLL_SEC)
         except Exception:
             log("цикл приёма файлов упал:", traceback.format_exc()[:300])
             time.sleep(30)
+    # ждём, пока обработчики доведут начатое: docker даёт на это stop_grace_period
+    deadline = time.time() + config.STOP_GRACE_SEC
+    while time.time() < deadline:
+        busy = db.q1("SELECT count(*) FROM jobs WHERE status='running'")
+        if not busy or not busy[0]:
+            break
+        time.sleep(5)
+    log("остановлен")
 
 
 if __name__ == "__main__":

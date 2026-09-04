@@ -209,6 +209,7 @@ svg text{font-family:inherit}
       <button data-vsec="sugg">Предложения</button>
       <button data-vsec="unknown">Кого не хватает</button>
       <button data-vsec="fast">⚡ Быстрая разметка</button>
+      <button data-vsec="global">🌍 Голоса всего архива</button>
     </div>
     <div id="vsec-people" class="vsec" style="display:flex;gap:16px;align-items:flex-start">
       <div style="flex:0 0 250px">
@@ -230,6 +231,9 @@ svg text{font-family:inherit}
     <div id="vsec-sugg" class="vsec" style="display:none">
       <div id="suggFilter"></div>
       <div id="suggBody"><div class="dim">загрузка…</div></div>
+    </div>
+    <div id="vsec-global" class="vsec" style="display:none">
+      <div id="globalBody"><div class="dim">загрузка…</div></div>
     </div>
     <div id="vsec-fast" class="vsec" style="display:none">
       <div id="fastBody"><div class="dim">загрузка…</div></div>
@@ -1076,6 +1080,7 @@ function parsePath(h){
       return {tab:'voices', vsec:'enroll', rid: /^\d+$/.test(p[2] || '') ? +p[2] : null};
     if (p[1] === 'suggestions') return {tab:'voices', vsec:'sugg'};
     if (p[1] === 'unknown') return {tab:'voices', vsec:'unknown'};
+    if (p[1] === 'global') return {tab:'voices', vsec:'global'};
     if (p[1] === 'fast') return {tab:'voices', vsec:'fast',
       rid: /^\d+$/.test(p[2] || '') ? +p[2] : null};
     return {tab:'voices', vsec:'people', spId: /^\d+$/.test(p[1] || '') ? +p[1] : null};
@@ -1422,6 +1427,9 @@ async function showVoices(r){
   } else if (VSEC === 'fast'){
     if (!VPEOPLE.length) await loadPeople();
     await loadFast(r.rid);
+  } else if (VSEC === 'global'){
+    if (!VPEOPLE.length) await loadPeople();
+    await loadGlobal();
   } else {
     if (!VPEOPLE.length) await loadPeople();
     await loadSugg();
@@ -1481,6 +1489,74 @@ async function loadUnknownCount(){
            ещё ${d.groups.length} голосов без имени (${mins} мин) →</a>`
       : '';
   } catch (e) {}
+}
+
+// ---------- Голоса всего архива ----------
+// Один человек — одна строка на весь архив, а не строка на каждую запись, где он
+// говорил. Подтверждение проставляет имя во всех записях сразу: так архив
+// размечается десятком решений вместо сотен.
+async function loadGlobal(){
+  const box = $('globalBody');
+  box.innerHTML = '<div class="dim">свожу голоса по всему архиву…</div>';
+  let d;
+  try { d = await api('/api/global/persons'); } catch (e) { fail(box, e); return; }
+  GLOB = d.persons;
+  if (!GLOB.length){ box.innerHTML = '<div class="card">Безымянных голосов не осталось.</div>'; return; }
+  box.innerHTML = `<div class="dim" style="margin-bottom:8px">
+      Без имени осталось <b>${d.total_minutes} мин</b> речи в ${GLOB.length} голосах.
+      Послушайте ядро и аутсайдеров: если это один человек — подтверждайте, имя проставится
+      во всех записях группы сразу.</div>` +
+    GLOB.map((p, i) => {
+      const frag = (c, kind) => `<button class="act" data-act="cplay" data-rid="${c.recording_id}"
+          data-start="${c.start_sec}" data-end="${c.end_sec}"
+          style="${kind === 'core' ? 'font-weight:600' : 'border-color:var(--yellow)'}"
+          title="запись #${c.recording_id} · ${esc(c.text)}">▶ ${(c.end_sec - c.start_sec).toFixed(1)}с · ${c.typicality}</button>`;
+      const picks = (p.match || []).map(x => `<button class="act" data-act="gpick" data-i="${i}"
+          data-name="${esc(x.name)}" style="border-color:${cohCol(x.cos)}"
+          title="Отдать «${esc(x.name)}» все ${p.fragments} фрагментов этой группы во всех ${p.recordings} записях">
+          ${esc(x.name)} <b style="color:${cohCol(x.cos)}">${(+x.cos).toFixed(2)}</b></button>`).join(' ');
+      const where = p.parts.slice(0, 8).map(x =>
+        `<span class="dim" title="метка ${esc(x.label)} в этой записи">#${x.recording_id} (${x.minutes}м)</span>`).join(' · ');
+      return `<div class="card" data-i="${i}" style="margin-bottom:10px">
+        <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+          <b style="font-size:15px">${p.minutes} мин речи</b>
+          <span class="dim">${p.fragments} фрагментов · записей ${p.recordings}</span>
+          <span class="dim" title="какая доля безымянной речи закроется, если разобрать все группы до этой включительно">закроет ${p.covers_pct}%</span>
+        </div>
+        <div class="sub" style="margin-top:6px">ядро — так этот голос звучит обычно:</div>
+        <div>${p.core.map(c => frag(c, 'core')).join(' ') || '<span class="dim">нет</span>'}</div>
+        <div class="sub" style="margin-top:6px">дальше всех от ядра — если сюда затесался чужой, он здесь:</div>
+        <div>${p.outliers.map(c => frag(c, 'out')).join(' ') || '<span class="dim">нет</span>'}</div>
+        <div class="sub" style="margin-top:6px">в записях: ${where}${p.parts.length > 8 ? ' …' : ''}</div>
+        <div class="rsrow" style="margin-top:8px">
+          ${picks}
+          <span class="dim">|</span>
+          <input data-role="nname" placeholder="новый человек" style="width:150px">
+          <button class="act" data-act="gnew" data-i="${i}">завести</button>
+          <button class="act" data-act="gtrash" data-i="${i}"
+            title="Вся группа — шум или фон. Эталоны не создаются.">мусор</button>
+        </div>
+        <div class="eres sub" style="margin-top:6px"></div>
+      </div>`;
+    }).join('');
+}
+let GLOB = [];
+
+// Подтверждение глобальной группы: имя всем её кластерам во всех записях, а в
+// эталоны — по одной самой типичной реплике из каждой записи (разнообразие
+// акустики важнее количества одинаковых реплик из одного разговора).
+async function globalAssign(card, name){
+  const i = +card.dataset.i, p = GLOB[i];
+  const t = toast('Применяю…', `${speakerLabel(name)}: ${p.fragments} фрагментов в ${p.recordings} записях`, null, 0);
+  try {
+    const r = await api('/api/global/assign', {method:'POST',
+      body:{name, parts: p.parts, enroll: name !== '[noise]'}});
+    t.set('Готово', `${speakerLabel(name)}: размечено ${r.updated} фрагментов` +
+      (r.enrolled ? `, эталонов +${r.enrolled}` : '') +
+      (r.errors && r.errors.length ? `. Часть эталонов не вышла: ${r.errors[0]}` : ''), 'ok');
+    VPEOPLE = [];
+    await loadGlobal();
+  } catch (e){ t.set('Не получилось', errText(e), 'err'); }
 }
 
 // ---------- Быстрая разметка ----------
@@ -2060,7 +2136,8 @@ document.addEventListener('click', async e => {
   const vb = e.target.closest('#vnav button');
   if (vb){
     const h = {people:'voices', enroll:'voices/enroll', sugg:'voices/suggestions',
-               unknown:'voices/unknown', fast:'voices/fast'}[vb.dataset.vsec];
+               unknown:'voices/unknown', fast:'voices/fast',
+               global:'voices/global'}[vb.dataset.vsec];
     go(h, false).catch(() => {});
     return;
   }
@@ -2170,6 +2247,15 @@ document.addEventListener('click', async e => {
       else if (a === 'etrash') await enrollAct(card, 'trash');
       else if (a === 'cplay') play({src: recSrc(b.dataset.rid), btn: b,
         start: +b.dataset.start, end: +b.dataset.end, title: 'ядро кластера'});
+      else if (a === 'gpick') await globalAssign(b.closest('.card'), b.dataset.name);
+      else if (a === 'gtrash') await globalAssign(b.closest('.card'), '[noise]');
+      else if (a === 'gnew'){
+        const c2 = b.closest('.card');
+        const nm = c2.querySelector('[data-role="nname"]').value.trim();
+        if (!nm){ c2.querySelector('.eres').textContent = 'введите имя'; return; }
+        await api('/api/speakers', {method:'POST', body:{name: nm}});
+        await globalAssign(c2, nm);
+      }
       else if (a === 'fok'){
         const c2 = b.closest('.card');
         await fastApply(c2, FAST.groups[+c2.dataset.i].label);

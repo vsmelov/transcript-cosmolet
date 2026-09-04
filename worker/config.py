@@ -44,6 +44,13 @@ PLAUD_SYNC_EVERY_SEC = int(os.environ.get("PLAUD_SYNC_EVERY_SEC", "900"))   # р
 # детектор и опознание жгут локальный процессор. Общий пул означал, что три
 # тяжёлых детектора занимают все слоты, пока сеть простаивает.
 # Этапы связаны только артефактами на диске, поэтому пулы работают независимо.
+# Роль контейнера: all | download | detect | quality | resolve. Этапы разнесены по
+# отдельным контейнерам, чтобы правка кода одного не обрывала работу остальных.
+WORKER_ROLE = os.environ.get("WORKER_ROLE", "all")
+# Сколько ждать завершения начатых этапов при остановке (детектор длинной записи
+# считает минутами, обрывать его на полуслове — терять эту работу целиком).
+STOP_GRACE_SEC = int(os.environ.get("STOP_GRACE_SEC", "900"))
+
 DOWNLOAD_WORKERS = int(os.environ.get("DOWNLOAD_WORKERS", "6"))
 DETECT_WORKERS = int(os.environ.get("DETECT_WORKERS", "5"))    # CPU: VAD + классификатор
 # Одновременные запросы к Scribe ограничены тарифом ElevenLabs (на Starter немного).

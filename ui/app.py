@@ -677,6 +677,161 @@ def sample_delete(sample_id: int):
 ANON_RE = r"^(s|speaker)[_ -]?([0-9]+|\?)$"
 
 
+# Глобальные персоны собираются ДВУХУРОВНЕВО: сначала кластеры внутри записей
+# (их считает воркер), затем склейка их центроидов между записями. Прямая
+# кластеризация 6485 отдельных фрагментов проверена и отвергнута: 20 минут счёта
+# и 1113 раздробленных групп, крупнейшая из которых — химера из нескольких
+# голосов с матчем 0.66. Склейка центроидов даёт то же самое за пару секунд и
+# чище: усреднённый вектор кластера намного устойчивее одиночной реплики.
+GLOBAL_JOIN = 0.80        # порог склейки центроидов; на 0.62 слипались разные люди
+
+
+@app.get("/api/global/persons")
+def global_persons(only_unnamed: bool = True, top: int = 10):
+    """Голоса, сведённые по ВСЕМУ архиву: один человек — одна строка, а не по строке
+    на каждую запись, где он говорил.
+
+    У каждой группы отдаётся ядро (самые типичные фрагменты) и аутсайдеры (самые
+    далёкие от центра): по ним человек за минуту проверяет, один ли это голос,
+    прежде чем подтвердить группу целиком во всех записях сразу.
+    """
+    where = "speaker_name ~ '^S[0-9?]'" if only_unnamed else "speaker_name <> '[noise]'"
+    rows = q(f"""SELECT recording_id, speaker_name, count(*) AS n,
+                        sum(end_sec - start_sec) AS sec, avg(embedding)::text AS cent
+                   FROM segments
+                  WHERE embedding IS NOT NULL AND end_sec - start_sec >= 2 AND {where}
+                  GROUP BY 1, 2 HAVING sum(end_sec - start_sec) >= 20""")
+    if not rows:
+        return {"persons": [], "total_minutes": 0, "note": "нечего группировать"}
+    cents, meta = [], []
+    for r in rows:
+        v = np.array(json.loads(r["cent"]), dtype=np.float64)
+        cents.append(v / (np.linalg.norm(v) or 1))
+        meta.append(r)
+
+    groups = [[i] for i in range(len(cents))]
+    cur = [c.copy() for c in cents]
+    while len(groups) > 1:
+        M = np.array(cur) @ np.array(cur).T
+        np.fill_diagonal(M, -1.0)
+        i, j = np.unravel_index(int(M.argmax()), M.shape)
+        if M[i, j] < GLOBAL_JOIN:
+            break
+        groups[i] += groups[j]
+        m = np.mean([cur[i], cur[j]], axis=0)
+        cur[i] = m / (np.linalg.norm(m) or 1)
+        groups.pop(j)
+        cur.pop(j)
+
+    base = {}
+    for r in q("""SELECT sp.name, ss.embedding FROM speakers sp
+                    JOIN speaker_samples ss ON ss.speaker_id = sp.id
+                   WHERE ss.embedding IS NOT NULL AND ss.is_active"""):
+        v = np.array(json.loads(r["embedding"]) if isinstance(r["embedding"], str) else r["embedding"])
+        base.setdefault(r["name"], []).append(v / (np.linalg.norm(v) or 1))
+    names = sorted(base)
+    B = (np.array([np.mean(base[n], axis=0) / (np.linalg.norm(np.mean(base[n], axis=0)) or 1)
+                   for n in names]) if names else None)
+
+    out = []
+    for g, c in sorted(zip(groups, cur), key=lambda gc: -sum(float(meta[i]["sec"]) for i in gc[0])):
+        parts = [{"recording_id": meta[i]["recording_id"], "label": meta[i]["speaker_name"],
+                  "minutes": round(float(meta[i]["sec"]) / 60, 1)} for i in g]
+        sec = sum(float(meta[i]["sec"]) for i in g)
+
+        # фрагменты всей группы, отсортированные по близости к её общему центру
+        conds = " OR ".join(["(recording_id = %s AND speaker_name = %s)"] * len(parts))
+        args = [x for p in parts for x in (p["recording_id"], p["label"])]
+        frags = q(f"""SELECT id, recording_id, start_sec, end_sec, text, embedding
+                        FROM segments WHERE embedding IS NOT NULL
+                         AND end_sec - start_sec >= 1.2 AND ({conds})""", tuple(args))
+        core, outliers = [], []
+        if frags:
+            M = np.array([json.loads(f["embedding"]) if isinstance(f["embedding"], str)
+                          else f["embedding"] for f in frags], dtype=np.float64)
+            M /= np.linalg.norm(M, axis=1, keepdims=True)
+            sims = M @ c
+            order = list(np.argsort(-sims))
+
+            def fmt(i):
+                f = frags[i]
+                return {"id": f["id"], "recording_id": f["recording_id"],
+                        "start_sec": f["start_sec"], "end_sec": f["end_sec"],
+                        "text": (f["text"] or "")[:140], "typicality": round(float(sims[i]), 3)}
+
+            core = [fmt(int(i)) for i in order[:top]]
+            outliers = [fmt(int(i)) for i in order[-top:]][::-1]
+
+        match = []
+        if B is not None:
+            sim = B @ c
+            match = [{"name": names[k], "cos": round(float(sim[k]), 2)} for k in np.argsort(-sim)[:3]]
+        out.append({"minutes": round(sec / 60, 1), "fragments": sum(int(meta[i]["n"]) for i in g),
+                    "recordings": len({p["recording_id"] for p in parts}), "parts": parts,
+                    "match": match, "core": core, "outliers": outliers})
+    total = sum(p["minutes"] for p in out) or 1
+    acc = 0.0
+    for p in out:
+        acc += p["minutes"]
+        p["covers_pct"] = round(acc / total * 100)
+    return {"persons": out, "total_minutes": round(total, 1)}
+
+
+@app.post("/api/global/assign")
+def global_assign(body: dict):
+    """Отдать человеку целую глобальную группу — все её кластеры во всех записях.
+
+    В эталоны идёт по одной самой типичной реплике ИЗ КАЖДОЙ записи, а не все
+    подряд: ценность базы голосов в разнообразии акустики, а десяток реплик из
+    одного разговора — по сути один эталон, который ещё и перетягивает центроид.
+    """
+    b = body or {}
+    name = str(b.get("name", "")).strip()
+    parts = b.get("parts") or []
+    if not name or not parts:
+        raise HTTPException(400, "name and parts are required")
+    enroll_core = bool(b.get("enroll", True)) and name != "[noise]"
+
+    updated, enrolled, errors = 0, 0, []
+    for part in parts:
+        rid, label = int(part["recording_id"]), str(part["label"])
+        if enroll_core:
+            segs = q("""SELECT id, start_sec, end_sec, embedding FROM segments
+                         WHERE recording_id = %s AND speaker_name = %s
+                           AND embedding IS NOT NULL AND end_sec - start_sec >= 2""", (rid, label))
+            if segs:
+                M = np.array([json.loads(x["embedding"]) if isinstance(x["embedding"], str)
+                              else x["embedding"] for x in segs], dtype=np.float64)
+                M /= np.linalg.norm(M, axis=1, keepdims=True)
+                c = M.mean(axis=0)
+                best = segs[int(np.argmax(M @ (c / (np.linalg.norm(c) or 1))))]
+                try:
+                    enroll({"recording_id": rid, "start_sec": best["start_sec"],
+                            "end_sec": best["end_sec"], "speaker_name": name})
+                    enrolled += 1
+                except HTTPException as e:
+                    errors.append(f"#{rid}: {e.detail}")
+
+        def run(c, rid=rid, label=label):
+            with c.transaction():
+                got = c.execute("""
+                    UPDATE segments SET speaker_name = %s,
+                           speaker_id = (SELECT id FROM speakers WHERE name = %s),
+                           ambiguous = false,
+                           detail = coalesce(detail, '{}'::jsonb)
+                                    || jsonb_build_object('resolution', %s::text)
+                     WHERE recording_id = %s AND speaker_name = %s RETURNING id""",
+                    (name, name, f"user:{name} (глобально)", rid, label)).fetchall()
+                if got:
+                    c.execute("""UPDATE conflicts SET status='resolved', resolved_name=%s,
+                                 resolved_by='user', resolved_at=now()
+                                 WHERE status='open' AND segment_id = ANY(%s)""",
+                              (name, [r[0] for r in got]))
+                return len(got)
+        updated += _run(run)
+    return {"ok": True, "name": name, "updated": updated, "enrolled": enrolled, "errors": errors[:5]}
+
+
 @app.get("/api/review/queue")
 def review_queue():
     """Записи, которые ещё ждут разметки, — самые «дешёвые» сверху.

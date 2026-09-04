@@ -1,3 +1,29 @@
+# Общие настройки всех воркеров: образ один, различаются они только ролью.
+x-worker: &worker
+  build: ./worker
+  restart: unless-stopped
+  env_file: .env
+  volumes:
+    - ./data:/data
+    - ./models:/models:ro
+    # токены Plaud: создаются на хосте командой `plaud login`, обновляются по refresh
+    - ${USERPROFILE:-~}/.plaud:/plaud
+  depends_on:
+    db:
+      condition: service_healthy
+
+x-worker-env: &worker-env
+  DATABASE_URL: postgresql://cosmolet:${POSTGRES_PASSWORD}@db:5432/cosmolet
+  DATA_DIR: /data
+  EMBED_MODEL: /models/campplus_zh_en_advanced.onnx
+  PLAUD_TOKENS: /plaud/tokens.json
+  # Размеры пулов — в одном месте: воркер по ним запускает потоки, UI по ним
+  # показывает загрузку. Разъедутся — интерфейс будет врать про «6 из 4».
+  DOWNLOAD_WORKERS: ${DOWNLOAD_WORKERS:-6}
+  DETECT_WORKERS: ${DETECT_WORKERS:-5}
+  QUALITY_WORKERS: ${QUALITY_WORKERS:-6}
+  RESOLVE_WORKERS: ${RESOLVE_WORKERS:-5}
+
 services:
   db:
     image: pgvector/pgvector:pg16
@@ -15,29 +41,39 @@ services:
       timeout: 3s
       retries: 10
 
-  worker:
-    build: ./worker
-    restart: unless-stopped
-    env_file: .env
+  # Этапы разнесены по контейнерам НАМЕРЕННО. Пока они жили в одном сервисе, правка
+  # кода опознания перезапускала заодно детектор и транскрипцию: их этапы обрывались
+  # на полуслове и помечались «прервано рестартом воркера», теряя десятки минут
+  # счёта. Теперь пересобирается только тот контейнер, чей код изменился.
+  # stop_grace_period даёт начатому этапу доработать: по сигналу воркер перестаёт
+  # брать новую работу и доводит текущую до конца.
+  worker-download:
+    <<: *worker
     environment:
-      DATABASE_URL: postgresql://cosmolet:${POSTGRES_PASSWORD}@db:5432/cosmolet
-      DATA_DIR: /data
-      EMBED_MODEL: /models/campplus_zh_en_advanced.onnx
-      PLAUD_TOKENS: /plaud/tokens.json
-      # Размеры пулов — в одном месте: воркер по ним запускает потоки, UI по ним
-      # показывает загрузку. Разъедутся — интерфейс будет врать про «6 из 4».
-      DOWNLOAD_WORKERS: ${DOWNLOAD_WORKERS:-6}
-      DETECT_WORKERS: ${DETECT_WORKERS:-5}
-      QUALITY_WORKERS: ${QUALITY_WORKERS:-6}
-      RESOLVE_WORKERS: ${RESOLVE_WORKERS:-5}
-    volumes:
-      - ./data:/data
-      - ./models:/models:ro
-      # токены Plaud: создаются на хосте командой `plaud login`, обновляются по refresh
-      - ${USERPROFILE:-~}/.plaud:/plaud
-    depends_on:
-      db:
-        condition: service_healthy
+      <<: *worker-env
+      WORKER_ROLE: download
+    stop_grace_period: 120s
+
+  worker-detect:
+    <<: *worker
+    environment:
+      <<: *worker-env
+      WORKER_ROLE: detect
+    stop_grace_period: 900s
+
+  worker-quality:
+    <<: *worker
+    environment:
+      <<: *worker-env
+      WORKER_ROLE: quality
+    stop_grace_period: 900s
+
+  worker-resolve:
+    <<: *worker
+    environment:
+      <<: *worker-env
+      WORKER_ROLE: resolve
+    stop_grace_period: 900s
 
   ui:
     build: ./ui
@@ -48,8 +84,6 @@ services:
       DATA_DIR: /data
       EMBED_MODEL: /models/campplus_zh_en_advanced.onnx
       DAILY_BUDGET_USD: ${DAILY_BUDGET_USD}   # тот же предохранитель, что у воркера
-      # Размеры пулов — в одном месте: воркер по ним запускает потоки, UI по ним
-      # показывает загрузку. Разъедутся — интерфейс будет врать про «6 из 4».
       DOWNLOAD_WORKERS: ${DOWNLOAD_WORKERS:-6}
       DETECT_WORKERS: ${DETECT_WORKERS:-5}
       QUALITY_WORKERS: ${QUALITY_WORKERS:-6}
