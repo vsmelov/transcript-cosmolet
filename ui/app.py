@@ -192,6 +192,41 @@ def as_dict(d):
     return d if isinstance(d, dict) else {}
 
 
+def base_matrix():
+    """Центроиды известных голосов: (имена, матрица). Для матча фрагментов на лету."""
+    acc = {}
+    for r in q("""SELECT sp.name, ss.embedding FROM speakers sp
+                    JOIN speaker_samples ss ON ss.speaker_id = sp.id
+                   WHERE ss.embedding IS NOT NULL AND ss.is_active"""):
+        v = np.array(json.loads(r["embedding"]) if isinstance(r["embedding"], str) else r["embedding"],
+                     dtype=np.float64)
+        acc.setdefault(r["name"], []).append(v / (np.linalg.norm(v) or 1))
+    names = sorted(acc)
+    if not names:
+        return [], None
+    M = np.array([np.mean(acc[n], axis=0) / (np.linalg.norm(np.mean(acc[n], axis=0)) or 1)
+                  for n in names])
+    return names, M
+
+
+def live_top(vec, names, M, k=3):
+    """Кандидаты для одного фрагмента, посчитанные сейчас.
+
+    В базе список кандидатов лежит ТОЛЬКО у спорных реплик — так решено, чтобы не
+    раздувать хранилище. Но человеку он нужен у любой: реплика может быть уверенно
+    своей внутри безымянного кластера, и тогда без кандидатов непонятно, кому её
+    отдавать. Считается это мгновенно — матрица из десятка центроидов.
+    """
+    if M is None or vec is None:
+        return []
+    v = np.array(vec, dtype=np.float64)
+    n = np.linalg.norm(v)
+    if not n:
+        return []
+    sim = M @ (v / n)
+    return [{"name": names[i], "cos": round(float(sim[i]), 3)} for i in np.argsort(-sim)[:k]]
+
+
 def utt(r, has_audio=False, **extra):
     """Единый формат ФРАЗЫ для всех экранов UI (компонент «Фраза»).
 
@@ -737,6 +772,7 @@ def global_persons(only_unnamed: bool = True, top: int = 10, min_typ: float = AS
     names = sorted(base)
     B = (np.array([np.mean(base[n], axis=0) / (np.linalg.norm(np.mean(base[n], axis=0)) or 1)
                    for n in names]) if names else None)
+    gnames, gM = names, B
 
     out = []
     for g, c in sorted(zip(groups, cur), key=lambda gc: -sum(float(meta[i]["sec"]) for i in gc[0])):
@@ -769,7 +805,8 @@ def global_persons(only_unnamed: bool = True, top: int = 10, min_typ: float = AS
                                 for i in keep))
 
             def fmt(i):
-                return utt(frags[i], True, typicality=round(float(sims[i]), 3))
+                return utt(frags[i], True, typicality=round(float(sims[i]), 3),
+                           live_top=live_top(M[i], gnames, gM))
 
             core = [fmt(i) for i in keep[:top]]
             outliers = [fmt(i) for i in keep[-top:]][::-1] if len(keep) > top else []
@@ -912,6 +949,7 @@ def enroll_candidates(recording_id: int):
                  WHERE s.recording_id = %s ORDER BY s.start_sec""", (recording_id,))
     names = {r["name"] for r in q("SELECT name FROM speakers")}
     refs = known_refs()
+    base_names, base_M = base_matrix()
     # векторы отдельным запросом: в общий список колонок их класть нельзя — это
     # 192 float на каждую реплику, а нужны они только здесь
     vec_by_id = {r["id"]: (json.loads(r["embedding"]) if isinstance(r["embedding"], str)
@@ -929,7 +967,9 @@ def enroll_candidates(recording_id: int):
         # не опознать, а фильтры и счётчики в UI должны считать по всем репликам.
         # reason важен человеку: top2_close («похож и на другого») и low_confidence —
         # это разные ситуации, и разбираются они по-разному
-        top = [utt(s, src is not None) for s in items[:300]]
+        top = [utt(s, src is not None,
+                   live_top=live_top(vec_by_id.get(s["id"]), base_names, base_M))
+               for s in items[:300]]
         # эталон и матч считаем по самому длинному НЕспорному фрагменту: спорный может
         # оказаться чужой репликой, попавшей в кластер по ошибке провайдера
         clean = [s for s in items if not s["ambiguous"]] or items
@@ -966,7 +1006,8 @@ def enroll_candidates(recording_id: int):
                     # поштучными действиями — иначе чужака в кластере видно, а
                     # переназначить его прямо здесь нечем
                     out.append(utt(seg, src is not None,
-                                   typicality=round(float(sims[int(i)]), 3)))
+                                   typicality=round(float(sims[int(i)]), 3),
+                                   live_top=live_top(vec_by_id.get(seg["id"]), base_names, base_M)))
                     if len(out) >= limit:
                         break
                 return out

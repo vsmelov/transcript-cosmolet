@@ -630,9 +630,14 @@ function renderUtterance(u, opts){
       ${linkBtn(link)}
     </div>`;
 
+  // Кандидаты: у спорных реплик они лежат в базе, у остальных считаются на лету
+  // (в базе их нет намеренно — иначе разбор занимал бы место у каждой реплики).
+  // Показывать их надо всегда: реплика бывает уверенно своей внутри БЕЗЫМЯННОГО
+  // кластера, и без кандидатов непонятно, кому её отдавать.
+  const cand = (Array.isArray(d.top) && d.top.length) ? d.top : (u.live_top || []);
   let det = '';
-  if (Array.isArray(d.top) && d.top.length)
-    det = '<div class="udet">кандидаты: ' + d.top.map(t =>
+  if (cand.length)
+    det = '<div class="udet">кандидаты: ' + cand.map(t =>
         `<span style="color:${spkCol(t.name)}">${esc(t.name)} ${(+t.cos).toFixed(2)}</span>`).join(' · ') +
       (d.cluster_default ? ` · кластер: ${esc(d.cluster_default.name)} ${(+d.cluster_default.cos).toFixed(2)}` : '') +
       '</div>';
