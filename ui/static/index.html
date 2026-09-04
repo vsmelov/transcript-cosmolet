@@ -153,6 +153,13 @@ svg text{font-family:inherit}
 #toasts .toast.go{opacity:0;transform:translateY(6px);transition:.25s}
 #toasts .toast b{display:block;margin-bottom:2px}
 @keyframes toastIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+
+/* кандидат = «имя | звезда»: две кнопки, слитые в одну плашку */
+.candg{display:inline-flex;margin:1px 4px 1px 0}
+button.act.cand{font-size:11px;padding:2px 7px}
+.candg button.act.cand:first-child{border-radius:5px 0 0 5px;border-right:none}
+.candg button.act.cand.star{border-radius:0 5px 5px 0;padding:2px 6px;color:var(--yellow)}
+.candg button.act.cand:hover{background:var(--panel)}
 </style>
 </head>
 <body>
@@ -637,9 +644,18 @@ function renderUtterance(u, opts){
   const cand = (Array.isArray(d.top) && d.top.length) ? d.top : (u.live_top || []);
   let det = '';
   if (cand.length)
-    det = '<div class="udet">кандидаты: ' + cand.map(t =>
-        `<span style="color:${spkCol(t.name)}">${esc(t.name)} ${(+t.cos).toFixed(2)}</span>`).join(' · ') +
-      (d.cluster_default ? ` · кластер: ${esc(d.cluster_default.name)} ${(+d.cluster_default.cos).toFixed(2)}` : '') +
+    // Кандидат — не текст, а пара кнопок: имя отдаёт фразу человеку, звёздочка
+    // делает то же и вдобавок кладёт фрагмент ему в эталоны. Разделено потому, что
+    // не всякая верно опознанная фраза годится в эталон: обрывок или фон только
+    // размывают голос, а типичная запись его укрепляет.
+    det = '<div class="udet">кандидаты: ' + cand.map(t => {
+        const nm = esc(t.name), cos = (+t.cos).toFixed(2);
+        return `<span class="candg"><button class="act cand" data-act="ucand" data-name="${nm}"
+            title="Отдать эту фразу «${nm}». В эталоны голоса она НЕ пойдёт.">${nm} ${cos}</button
+          ><button class="act cand star" data-act="ucandstar" data-name="${nm}"
+            title="Отдать «${nm}» И запомнить этот фрагмент как эталон его голоса.">★</button></span>`;
+      }).join(' ') +
+      (d.cluster_default ? ` <span class="dim">· кластер: ${esc(d.cluster_default.name)} ${(+d.cluster_default.cos).toFixed(2)}</span>` : '') +
       '</div>';
 
   const low = u.confidence != null && u.confidence < 0.7;
@@ -707,6 +723,11 @@ async function uttAct(btn, act){
   const u = UTT[+el.dataset.uid];
   if (!u) return;
   if (act === 'uplay'){ playSpan(u.recording_id, u.start_sec, u.end_sec, btn); return; }
+  // кандидат: имя — просто пометить фразу, звёздочка — ещё и в эталоны
+  if (act === 'ucand' || act === 'ucandstar'){
+    await applyUtt(el, u, btn.dataset.name, act === 'ucandstar', false, btn);
+    return;
+  }
   if (act === 'usplit'){ await splitUtt(el, u, btn); return; }
   const box = el.querySelector('[data-role="enroll"]');
   const want = !!(box && box.checked);
@@ -2129,7 +2150,8 @@ async function loadBalances(force){
 }
 let BAL_CACHE = '';
 
-const UACTS = new Set(['uplay', 'uok', 'uassign', 'unew', 'unoise', 'usplit', 'uall']);
+const UACTS = new Set(['uplay', 'uok', 'uassign', 'unew', 'unoise', 'usplit', 'uall',
+                       'ucand', 'ucandstar']);
 
 // Выбор человека в списке меняет смысл кнопки подтверждения: пользователь выбирает
 // имя и жмёт «подтвердить», ожидая назначить именно его — надпись это показывает.
