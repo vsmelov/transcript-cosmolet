@@ -1499,13 +1499,23 @@ async function loadGlobal(){
   const box = $('globalBody');
   box.innerHTML = '<div class="dim">свожу голоса по всему архиву…</div>';
   let d;
-  try { d = await api('/api/global/persons'); } catch (e) { fail(box, e); return; }
+  try { d = await api('/api/global/persons?min_typ=' + GTYP); } catch (e) { fail(box, e); return; }
   GLOB = d.persons;
   if (!GLOB.length){ box.innerHTML = '<div class="card">Безымянных голосов не осталось.</div>'; return; }
-  box.innerHTML = `<div class="dim" style="margin-bottom:8px">
-      Без имени осталось <b>${d.total_minutes} мин</b> речи в ${GLOB.length} голосах.
-      Послушайте ядро и аутсайдеров: если это один человек — подтверждайте, имя проставится
-      во всех записях группы сразу.</div>` +
+  box.innerHTML = `<div class="rsrow" style="margin-top:0">
+      <span class="dim">Без имени осталось <b>${d.total_minutes} мин</b> речи в ${GLOB.length} голосах.
+        Послушайте ядро и аутсайдеров: если это один человек — подтверждайте, имя проставится
+        во всех записях группы сразу.</span>
+      <span style="flex:1"></span>
+      <label class="dim" title="Насколько похожим на голос группы должен быть фрагмент, чтобы получить имя.
+Строже — меньше риска подписать чужую реплику, но часть речи останется безымянной.">строгость:
+        <select id="gtyp">
+          <option value="0.25"${GTYP == 0.25 ? ' selected' : ''}>мягко (0.25)</option>
+          <option value="0.35"${GTYP == 0.35 ? ' selected' : ''}>обычно (0.35)</option>
+          <option value="0.45"${GTYP == 0.45 ? ' selected' : ''}>строго (0.45)</option>
+          <option value="0.55"${GTYP == 0.55 ? ' selected' : ''}>очень строго (0.55)</option>
+        </select></label>
+    </div>` +
     GLOB.map((p, i) => {
       const frag = (c, kind) => `<button class="act" data-act="cplay" data-rid="${c.recording_id}"
           data-start="${c.start_sec}" data-end="${c.end_sec}"
@@ -1522,6 +1532,8 @@ async function loadGlobal(){
           <b style="font-size:15px">${p.minutes} мин речи</b>
           <span class="dim">${p.fragments} фрагментов · записей ${p.recordings}</span>
           <span class="dim" title="какая доля безымянной речи закроется, если разобрать все группы до этой включительно">закроет ${p.covers_pct}%</span>
+          <span style="color:var(--green)" title="Имя получат только фрагменты, похожие на голос группы не меньше чем на ${p.min_typicality}. Остальные останутся безымянными: в группу затекает примесь из локальных кластеров, и тащить её за компанию нельзя.">
+            имя получат ${p.fit} из ${p.checked} (${p.fit_minutes} мин)</span>
         </div>
         <div class="sub" style="margin-top:6px">ядро — так этот голос звучит обычно:</div>
         <div>${p.core.map(c => frag(c, 'core')).join(' ') || '<span class="dim">нет</span>'}</div>
@@ -1541,6 +1553,8 @@ async function loadGlobal(){
     }).join('');
 }
 let GLOB = [];
+let GTYP = 0.45;      // по умолчанию строго: чужая реплика с чужим именем дороже,
+                      // чем оставшийся безымянным фрагмент
 
 // Подтверждение глобальной группы: имя всем её кластерам во всех записях, а в
 // эталоны — по одной самой типичной реплике из каждой записи (разнообразие
@@ -1550,8 +1564,11 @@ async function globalAssign(card, name){
   const t = toast('Применяю…', `${speakerLabel(name)}: ${p.fragments} фрагментов в ${p.recordings} записях`, null, 0);
   try {
     const r = await api('/api/global/assign', {method:'POST',
-      body:{name, parts: p.parts, enroll: name !== '[noise]'}});
+      body:{name, parts: p.parts, enroll: name !== '[noise]',
+            min_typicality: GTYP,
+            centroid: name === '[noise]' ? null : p.centroid}});
     t.set('Готово', `${speakerLabel(name)}: размечено ${r.updated} фрагментов` +
+      (r.skipped ? `, пропущено непохожих ${r.skipped}` : '') +
       (r.enrolled ? `, эталонов +${r.enrolled}` : '') +
       (r.errors && r.errors.length ? `. Часть эталонов не вышла: ${r.errors[0]}` : ''), 'ok');
     VPEOPLE = [];
@@ -2120,6 +2137,7 @@ const UACTS = new Set(['uplay', 'uok', 'uassign', 'unew', 'unoise', 'usplit', 'u
 // имя и жмёт «подтвердить», ожидая назначить именно его — надпись это показывает.
 document.addEventListener('change', e => {
   if (e.target.id === 'bulkEnroll' || e.target.id === 'bulkWho'){ bulkWhat(); return; }
+  if (e.target.id === 'gtyp'){ GTYP = +e.target.value; loadGlobal(); return; }
   const sel = e.target.closest('[data-role="who"]');
   if (!sel) return;
   const box = sel.closest('.utt');

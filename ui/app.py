@@ -684,10 +684,15 @@ ANON_RE = r"^(s|speaker)[_ -]?([0-9]+|\?)$"
 # голосов с матчем 0.66. Склейка центроидов даёт то же самое за пару секунд и
 # чище: усреднённый вектор кластера намного устойчивее одиночной реплики.
 GLOBAL_JOIN = 0.80        # порог склейки центроидов; на 0.62 слипались разные люди
+# Насколько фрагмент должен быть похож на голос группы, чтобы получить её имя.
+# Группа наследует примесь из локальных кластеров: её аутсайдеры с типичностью
+# около 0.1 — уже чужой голос, и тащить их за компанию нельзя. Такие фрагменты
+# остаются безымянными: честное «не знаем» лучше уверенно неверного имени.
+ASSIGN_MIN_TYPICALITY = 0.35
 
 
 @app.get("/api/global/persons")
-def global_persons(only_unnamed: bool = True, top: int = 10):
+def global_persons(only_unnamed: bool = True, top: int = 10, min_typ: float = ASSIGN_MIN_TYPICALITY):
     """Голоса, сведённые по ВСЕМУ архиву: один человек — одна строка, а не по строке
     на каждую запись, где он говорил.
 
@@ -745,7 +750,7 @@ def global_persons(only_unnamed: bool = True, top: int = 10):
         frags = q(f"""SELECT id, recording_id, start_sec, end_sec, text, embedding
                         FROM segments WHERE embedding IS NOT NULL
                          AND end_sec - start_sec >= 1.2 AND ({conds})""", tuple(args))
-        core, outliers = [], []
+        core, outliers, fit, fit_sec = [], [], 0, 0.0
         if frags:
             M = np.array([json.loads(f["embedding"]) if isinstance(f["embedding"], str)
                           else f["embedding"] for f in frags], dtype=np.float64)
@@ -761,6 +766,9 @@ def global_persons(only_unnamed: bool = True, top: int = 10):
 
             core = [fmt(int(i)) for i in order[:top]]
             outliers = [fmt(int(i)) for i in order[-top:]][::-1]
+            fit = int((sims >= min_typ).sum())
+            fit_sec = float(sum(float(frags[int(i)]["end_sec"]) - float(frags[int(i)]["start_sec"])
+                                for i in range(len(frags)) if sims[i] >= min_typ))
 
         match = []
         if B is not None:
@@ -768,7 +776,11 @@ def global_persons(only_unnamed: bool = True, top: int = 10):
             match = [{"name": names[k], "cos": round(float(sim[k]), 2)} for k in np.argsort(-sim)[:3]]
         out.append({"minutes": round(sec / 60, 1), "fragments": sum(int(meta[i]["n"]) for i in g),
                     "recordings": len({p["recording_id"] for p in parts}), "parts": parts,
-                    "match": match, "core": core, "outliers": outliers})
+                    "match": match, "core": core, "outliers": outliers,
+                    # сколько фрагментов достаточно похожи, чтобы получить имя
+                    "fit": fit, "fit_minutes": round(fit_sec / 60, 1),
+                    "checked": len(frags), "min_typicality": min_typ,
+                    "centroid": [round(float(x), 6) for x in c]})
     total = sum(p["minutes"] for p in out) or 1
     acc = 0.0
     for p in out:
@@ -791,8 +803,15 @@ def global_assign(body: dict):
     if not name or not parts:
         raise HTTPException(400, "name and parts are required")
     enroll_core = bool(b.get("enroll", True)) and name != "[noise]"
+    # Центроид группы приходит с экрана — по нему отсеиваем чужаков. Без фильтра
+    # подтверждение тащило бы в человека и аутсайдеров с типичностью 0.1.
+    cent = b.get("centroid")
+    cent = (np.array(cent, dtype=np.float64) if cent else None)
+    if cent is not None:
+        cent = cent / (np.linalg.norm(cent) or 1)
+    min_typ = float(b.get("min_typicality", ASSIGN_MIN_TYPICALITY))
 
-    updated, enrolled, errors = 0, 0, []
+    updated, skipped, enrolled, errors = 0, 0, 0, []
     for part in parts:
         rid, label = int(part["recording_id"]), str(part["label"])
         if enroll_core:
@@ -812,7 +831,25 @@ def global_assign(body: dict):
                 except HTTPException as e:
                     errors.append(f"#{rid}: {e.detail}")
 
-        def run(c, rid=rid, label=label):
+        # какие фрагменты этого кластера достаточно похожи на голос группы
+        rows = q("""SELECT id, embedding FROM segments
+                     WHERE recording_id = %s AND speaker_name = %s""", (rid, label))
+        if cent is not None:
+            ids = []
+            for r in rows:
+                if r["embedding"] is None:
+                    continue        # без вектора судить не по чему — оставляем как есть
+                v = np.array(json.loads(r["embedding"]) if isinstance(r["embedding"], str)
+                             else r["embedding"], dtype=np.float64)
+                if float(cent @ (v / (np.linalg.norm(v) or 1))) >= min_typ:
+                    ids.append(r["id"])
+            skipped += len(rows) - len(ids)
+        else:
+            ids = [r["id"] for r in rows]
+        if not ids:
+            continue
+
+        def run(c, ids=ids):
             with c.transaction():
                 got = c.execute("""
                     UPDATE segments SET speaker_name = %s,
@@ -820,8 +857,8 @@ def global_assign(body: dict):
                            ambiguous = false,
                            detail = coalesce(detail, '{}'::jsonb)
                                     || jsonb_build_object('resolution', %s::text)
-                     WHERE recording_id = %s AND speaker_name = %s RETURNING id""",
-                    (name, name, f"user:{name} (глобально)", rid, label)).fetchall()
+                     WHERE id = ANY(%s) RETURNING id""",
+                    (name, name, f"user:{name} (глобально)", ids)).fetchall()
                 if got:
                     c.execute("""UPDATE conflicts SET status='resolved', resolved_name=%s,
                                  resolved_by='user', resolved_at=now()
@@ -829,7 +866,8 @@ def global_assign(body: dict):
                               (name, [r[0] for r in got]))
                 return len(got)
         updated += _run(run)
-    return {"ok": True, "name": name, "updated": updated, "enrolled": enrolled, "errors": errors[:5]}
+    return {"ok": True, "name": name, "updated": updated, "skipped": skipped,
+            "enrolled": enrolled, "errors": errors[:5]}
 
 
 @app.get("/api/review/queue")
