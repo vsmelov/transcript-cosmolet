@@ -747,9 +747,11 @@ def global_persons(only_unnamed: bool = True, top: int = 10, min_typ: float = AS
         # фрагменты всей группы, отсортированные по близости к её общему центру
         conds = " OR ".join(["(recording_id = %s AND speaker_name = %s)"] * len(parts))
         args = [x for p in parts for x in (p["recording_id"], p["label"])]
-        frags = q(f"""SELECT id, recording_id, start_sec, end_sec, text, embedding
-                        FROM segments WHERE embedding IS NOT NULL
-                         AND end_sec - start_sec >= 1.2 AND ({conds})""", tuple(args))
+        # полный набор полей: фрагменты рисуются тем же компонентом «Фраза», что и
+        # везде, — с текстом, плеером и кнопками поштучного переназначения
+        frags = q(f"""SELECT {SEG_COLS}, s.embedding FROM segments s
+                       WHERE s.embedding IS NOT NULL
+                         AND s.end_sec - s.start_sec >= 1.2 AND ({conds})""", tuple(args))
         core, outliers, fit, fit_sec = [], [], 0, 0.0
         if frags:
             M = np.array([json.loads(f["embedding"]) if isinstance(f["embedding"], str)
@@ -767,10 +769,7 @@ def global_persons(only_unnamed: bool = True, top: int = 10, min_typ: float = AS
                                 for i in keep))
 
             def fmt(i):
-                f = frags[i]
-                return {"id": f["id"], "recording_id": f["recording_id"],
-                        "start_sec": f["start_sec"], "end_sec": f["end_sec"],
-                        "text": (f["text"] or "")[:140], "typicality": round(float(sims[i]), 3)}
+                return utt(frags[i], True, typicality=round(float(sims[i]), 3))
 
             core = [fmt(i) for i in keep[:top]]
             outliers = [fmt(i) for i in keep[-top:]][::-1] if len(keep) > top else []
@@ -819,35 +818,23 @@ def global_assign(body: dict):
     updated, skipped, enrolled, errors = 0, 0, 0, []
     for part in parts:
         rid, label = int(part["recording_id"]), str(part["label"])
-        if enroll_core:
-            segs = q("""SELECT id, start_sec, end_sec, embedding FROM segments
-                         WHERE recording_id = %s AND speaker_name = %s
-                           AND embedding IS NOT NULL AND end_sec - start_sec >= 2""", (rid, label))
-            if segs:
-                M = np.array([json.loads(x["embedding"]) if isinstance(x["embedding"], str)
-                              else x["embedding"] for x in segs], dtype=np.float64)
-                M /= np.linalg.norm(M, axis=1, keepdims=True)
-                c = M.mean(axis=0)
-                best = segs[int(np.argmax(M @ (c / (np.linalg.norm(c) or 1))))]
-                try:
-                    enroll({"recording_id": rid, "start_sec": best["start_sec"],
-                            "end_sec": best["end_sec"], "speaker_name": name})
-                    enrolled += 1
-                except HTTPException as e:
-                    errors.append(f"#{rid}: {e.detail}")
 
         # какие фрагменты этого кластера достаточно похожи на голос группы
         rows = q("""SELECT id, embedding FROM segments
                      WHERE recording_id = %s AND speaker_name = %s""", (rid, label))
         if cent is not None:
-            ids = []
+            scored = []
             for r in rows:
                 if r["embedding"] is None:
                     continue        # без вектора судить не по чему — оставляем как есть
                 v = np.array(json.loads(r["embedding"]) if isinstance(r["embedding"], str)
                              else r["embedding"], dtype=np.float64)
-                if float(cent @ (v / (np.linalg.norm(v) or 1))) >= min_typ:
-                    ids.append(r["id"])
+                cos = float(cent @ (v / (np.linalg.norm(v) or 1)))
+                if cos >= min_typ:
+                    scored.append((cos, r["id"]))
+            # по убыванию похожести: первый — самый типичный, он и пойдёт в эталоны
+            scored.sort(reverse=True)
+            ids = [i for _, i in scored]
             skipped += len(rows) - len(ids)
         else:
             ids = [r["id"] for r in rows]
@@ -865,12 +852,29 @@ def global_assign(body: dict):
                      WHERE id = ANY(%s) RETURNING id""",
                     (name, name, f"user:{name} (глобально)", ids)).fetchall()
                 if got:
+                    # курсор настроен на словари: r["id"], а не r[0] — иначе KeyError
                     c.execute("""UPDATE conflicts SET status='resolved', resolved_name=%s,
                                  resolved_by='user', resolved_at=now()
                                  WHERE status='open' AND segment_id = ANY(%s)""",
-                              (name, [r[0] for r in got]))
+                              (name, [r["id"] for r in got]))
                 return len(got)
-        updated += _run(run)
+        got_n = _run(run)
+        updated += got_n
+
+        # Эталон берём ТОЛЬКО после успешной разметки этой записи. Раньше он
+        # создавался раньше UPDATE, и упавший запрос оставлял за собой эталоны при
+        # том, что разметка откатывалась: база голосов росла от неудавшихся попыток.
+        if enroll_core and got_n and ids:
+            best_id = ids[0]        # ids отсортированы по убыванию похожести на группу
+            seg = q1("""SELECT recording_id, start_sec, end_sec FROM segments
+                         WHERE id = %s AND end_sec - start_sec >= 2""", (best_id,))
+            if seg:
+                try:
+                    enroll({"recording_id": seg["recording_id"], "start_sec": seg["start_sec"],
+                            "end_sec": seg["end_sec"], "speaker_name": name})
+                    enrolled += 1
+                except HTTPException as e:
+                    errors.append(f"#{rid}: {e.detail}")
     return {"ok": True, "name": name, "updated": updated, "skipped": skipped,
             "enrolled": enrolled, "errors": errors[:5]}
 

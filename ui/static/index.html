@@ -1517,10 +1517,11 @@ async function loadGlobal(){
         </select></label>
     </div>` +
     GLOB.map((p, i) => {
-      const frag = (c, kind) => `<button class="act" data-act="cplay" data-rid="${c.recording_id}"
-          data-start="${c.start_sec}" data-end="${c.end_sec}"
-          style="${kind === 'core' ? 'font-weight:600' : 'border-color:var(--yellow)'}"
-          title="запись #${c.recording_id} · ${esc(c.text)}">▶ ${(c.end_sec - c.start_sec).toFixed(1)}с · ${c.typicality}</button>`;
+      // тот же компонент «Фраза», что и на остальных экранах: с текстом, плеером и
+      // поштучными действиями. Раньше здесь были голые кнопки — послушать можно,
+      // а переназначить отдельный фрагмент нельзя, хотя ровно это и требуется,
+      // когда в группу затесался чужой.
+      const frag = c => renderUtterance(c, {confirm: (p.match[0] || {}).name || ''});
       const picks = (p.match || []).map(x => `<button class="act" data-act="gpick" data-i="${i}"
           data-name="${esc(x.name)}" style="border-color:${cohCol(x.cos)}"
           title="Отдать «${esc(x.name)}» все ${p.fragments} фрагментов этой группы во всех ${p.recordings} записях">
@@ -1536,10 +1537,10 @@ async function loadGlobal(){
             имя получат ${p.fit} из ${p.checked} (${p.fit_minutes} мин)</span>
         </div>
         <div class="sub" style="margin-top:6px">ядро — так этот голос звучит обычно:</div>
-        <div>${p.core.map(c => frag(c, 'core')).join(' ') || '<span class="dim">нет</span>'}</div>
+        <div>${p.core.map(frag).join('') || '<span class="dim">нет</span>'}</div>
         <div class="sub" style="margin-top:6px">самое непохожее из того, что <b>получит имя</b> —
           если и это он, группе можно верить целиком:</div>
-        <div>${p.outliers.map(c => frag(c, 'out')).join(' ') || '<span class="dim">вся группа однородна</span>'}</div>
+        <div>${p.outliers.map(frag).join('') || '<span class="dim">вся группа однородна</span>'}</div>
         <div class="sub" style="margin-top:6px">в записях: ${where}${p.parts.length > 8 ? ' …' : ''}</div>
         <div class="rsrow" style="margin-top:8px">
           ${picks}
