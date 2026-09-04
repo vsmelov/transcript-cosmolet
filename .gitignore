@@ -6,3 +6,8 @@ __pycache__/
 
 # мусор от временных файлов агентов
 *scratchpad*
+
+# персональные данные (имена, эмбеддинги голосов, локальные пути) — только на диске
+seed_speakers.sql
+enrich_clips.json
+enrich_voiceprints.py

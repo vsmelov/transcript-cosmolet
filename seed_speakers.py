@@ -5,7 +5,7 @@ from pathlib import Path
 
 VP = Path(r"C:\Users\v\PycharmProjects\claude-workspace\transcribe-mcp\voiceprints")
 DEST = Path(r"C:\Users\v\PycharmProjects\claude-workspace\cosmolet\data\speakers")
-OUT = Path(r"C:\Users\v\PycharmProjects\claude-workspace\cosmolet\seed_speakers.sql")
+OUT = Path(r"C:\Users\v\PycharmProjects\claude-workspace\cosmolet\data\seed_speakers.sql")  # data/ не в git: имена и голоса реальных людей
 
 DEST.mkdir(parents=True, exist_ok=True)
 registry = json.loads((VP / "registry.json").read_text(encoding="utf-8"))
