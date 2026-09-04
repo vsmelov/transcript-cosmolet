@@ -2116,6 +2116,9 @@ async function loadProgress(){
       ${q.failed ? `<span style="color:var(--red)" title="записи, которые сейчас не удалось обработать; большинство переигрывается автоматически">с ошибкой: ${q.failed}</span>` : ''}
       ${d.retried ? `<span class="dim" title="падений, которые уже исправлены повторным прогоном — история, а не текущая проблема">исправлено повтором: ${d.retried}</span>` : ''}
       <span id="balBox" class="dim" style="cursor:pointer" title="остатки на счетах провайдеров — нажмите, чтобы обновить">счета: …</span>
+      <button class="act" data-act="syncnow"
+        title="Сходить в облако Plaud прямо сейчас: подтянуть новые записи и вернуть в очередь зависшие скачивания. Плановый обход и так идёт раз в 15 минут.">
+        ↻ проверить облако</button>
     </div>`;
   // У каждого этапа свой пул потоков: этапы упираются в разные ресурсы (чужие
   // сервисы против локального процессора), поэтому и загрузку показываем отдельно.
@@ -2285,6 +2288,15 @@ document.addEventListener('click', async e => {
       else if (a === 'etrash') await enrollAct(card, 'trash');
       else if (a === 'cplay') play({src: recSrc(b.dataset.rid), btn: b,
         start: +b.dataset.start, end: +b.dataset.end, title: 'ядро кластера'});
+      else if (a === 'syncnow'){
+        const t = toast('Проверяю облако…', 'ищу новые записи и зависшие скачивания', null, 0);
+        try {
+          const r = await api('/api/sync/now', {method:'POST'});
+          t.set('Готово', (r.requeued ? `вернул в очередь зависших: ${r.requeued}. ` : '') +
+            'Новые записи появятся в списке в течение минуты.', 'ok');
+          setTimeout(() => loadProgress(), 4000);
+        } catch (e){ t.set('Не получилось', errText(e), 'err'); }
+      }
       else if (a === 'gpick') await globalAssign(b.closest('.card'), b.dataset.name);
       else if (a === 'gtrash') await globalAssign(b.closest('.card'), '[noise]');
       else if (a === 'gnew'){

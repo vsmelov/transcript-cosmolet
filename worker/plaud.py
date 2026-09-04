@@ -8,6 +8,7 @@ platform.plaud.ai/developer/api с OAuth-токеном из ~/.plaud/tokens.jso
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -98,11 +99,19 @@ def audio_url(file_id: str, tries: int = 20, wait: float = 30.0) -> str | None:
     return None
 
 
+# Сколько ждать очередной порции байт. Общий клиентский таймаут в 120с на потоковое
+# скачивание не действовал так, как нужно: две записи простояли три часа на 3 МБ,
+# потому что раздача Plaud формально не рвалась. Здесь таймаут именно на чтение.
+STALL_SEC = float(os.environ.get("DOWNLOAD_STALL_SEC", "180"))
+
+
 def download(url: str, dest: Path) -> int:
     """Качаем во временный .part и переименовываем — воркер не должен увидеть недокачанное."""
     tmp = dest.with_suffix(dest.suffix + ".part")
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with _client.stream("GET", url) as r:
+    # read-таймаут задаём на сам запрос: проверять время внутри цикла бесполезно,
+    # он блокируется на чтении и просто не крутится, пока сервер молчит
+    with _client.stream("GET", url, timeout=httpx.Timeout(STALL_SEC, connect=30.0)) as r:
         r.raise_for_status()
         with open(tmp, "wb") as f:
             for chunk in r.iter_bytes(1 << 20):

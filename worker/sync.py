@@ -68,11 +68,28 @@ def sync(log=print) -> dict:
                 continue
             seen += 1
             title = it.get("name") or fid
-            row = db.q1("SELECT id, title FROM recordings WHERE meta->>'plaud_file_id' = %s", fid)
+            row = db.q1("""SELECT id, title, audio_path FROM recordings
+                            WHERE meta->>'plaud_file_id' = %s""", fid)
             if row:
-                # Plaud дообрабатывает записи и переименовывает их в облаке — подтягиваем
+                # Plaud дообрабатывает записи своим ИИ и позже даёт им человеческие
+                # названия. Ждать этого не нужно: мы подтягиваем название на каждом
+                # синке, а вместе с ним переименовываем и файл на диске — иначе имя
+                # файла навсегда осталось бы техническим, и сверять архив с облаком
+                # глазами стало бы невозможно.
                 if row[1] != title:
-                    db.q("UPDATE recordings SET title = %s WHERE id = %s", title, row[0])
+                    rec_id, old_path = row[0], row[2]
+                    new_name = safe_name(title, it.get("start_at") or "", fid)
+                    if old_path and Path(old_path).is_file() and Path(old_path).name != new_name:
+                        new_path = Path(old_path).with_name(new_name)
+                        try:
+                            Path(old_path).rename(new_path)
+                            db.q("""UPDATE recordings SET title=%s, filename=%s, audio_path=%s
+                                     WHERE id=%s""", title, new_name, str(new_path), rec_id)
+                        except OSError as exc:
+                            log(f"не переименовал файл #{rec_id}: {exc}")
+                            db.q("UPDATE recordings SET title=%s WHERE id=%s", title, rec_id)
+                    else:
+                        db.q("UPDATE recordings SET title=%s WHERE id=%s", title, rec_id)
                     renamed += 1
                 continue
             dur = float(it.get("duration") or 0) / 1000.0

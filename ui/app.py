@@ -916,6 +916,33 @@ def global_assign(body: dict):
             "enrolled": enrolled, "errors": errors[:5]}
 
 
+@app.post("/api/sync/now")
+def sync_now():
+    """Сходить в облако Plaud прямо сейчас, не дожидаясь планового обхода.
+
+    Воркер опрашивает облако раз в пятнадцать минут, и после «я только что залил
+    запись» ждать этот цикл незачем. Заодно возвращаем в очередь всё, что зависло
+    на скачивании: раздача Plaud умеет замирать, не разрывая соединения.
+    """
+    import sys
+    sys.path.insert(0, "/worker")
+    stuck = _run(lambda c: c.execute("""
+        UPDATE recordings SET status='pending_download'
+         WHERE status='downloading'
+           AND id IN (SELECT recording_id FROM jobs
+                       WHERE stage='download' AND status='running'
+                         AND started_at < now() - interval '10 minutes')
+        RETURNING id""").fetchall())
+    if stuck:
+        _run(lambda c: c.execute("""
+            UPDATE jobs SET status='failed', finished_at=now(),
+                   error=coalesce(error,'') || ' [зависло, возвращено в очередь]'
+             WHERE stage='download' AND status='running'
+               AND recording_id = ANY(%s)""", ([r[0] for r in stuck],)))
+    return {"ok": True, "requeued": len(stuck or []),
+            "note": "воркер подхватит очередь в течение полуминуты"}
+
+
 @app.get("/api/review/queue")
 def review_queue():
     """Записи, которые ещё ждут разметки, — самые «дешёвые» сверху.
