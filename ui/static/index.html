@@ -1537,8 +1537,9 @@ async function loadGlobal(){
         </div>
         <div class="sub" style="margin-top:6px">ядро — так этот голос звучит обычно:</div>
         <div>${p.core.map(c => frag(c, 'core')).join(' ') || '<span class="dim">нет</span>'}</div>
-        <div class="sub" style="margin-top:6px">дальше всех от ядра — если сюда затесался чужой, он здесь:</div>
-        <div>${p.outliers.map(c => frag(c, 'out')).join(' ') || '<span class="dim">нет</span>'}</div>
+        <div class="sub" style="margin-top:6px">самое непохожее из того, что <b>получит имя</b> —
+          если и это он, группе можно верить целиком:</div>
+        <div>${p.outliers.map(c => frag(c, 'out')).join(' ') || '<span class="dim">вся группа однородна</span>'}</div>
         <div class="sub" style="margin-top:6px">в записях: ${where}${p.parts.length > 8 ? ' …' : ''}</div>
         <div class="rsrow" style="margin-top:8px">
           ${picks}

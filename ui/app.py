@@ -756,7 +756,15 @@ def global_persons(only_unnamed: bool = True, top: int = 10, min_typ: float = AS
                           else f["embedding"] for f in frags], dtype=np.float64)
             M /= np.linalg.norm(M, axis=1, keepdims=True)
             sims = M @ c
-            order = list(np.argsort(-sims))
+            # Показываем ТОЛЬКО те фрагменты, которые реально получат имя. Смотреть
+            # на отсеянных бессмысленно: решение по ним всё равно не принимается.
+            # Поэтому «аутсайдеры» здесь — худшие ИЗ ПРОХОДЯЩИХ, то есть то самое
+            # пограничное, ради чего человек и проверяет группу перед подтверждением.
+            keep = [i for i in range(len(frags)) if sims[i] >= min_typ]
+            keep.sort(key=lambda i: -sims[i])
+            fit = len(keep)
+            fit_sec = float(sum(float(frags[i]["end_sec"]) - float(frags[i]["start_sec"])
+                                for i in keep))
 
             def fmt(i):
                 f = frags[i]
@@ -764,11 +772,8 @@ def global_persons(only_unnamed: bool = True, top: int = 10, min_typ: float = AS
                         "start_sec": f["start_sec"], "end_sec": f["end_sec"],
                         "text": (f["text"] or "")[:140], "typicality": round(float(sims[i]), 3)}
 
-            core = [fmt(int(i)) for i in order[:top]]
-            outliers = [fmt(int(i)) for i in order[-top:]][::-1]
-            fit = int((sims >= min_typ).sum())
-            fit_sec = float(sum(float(frags[int(i)]["end_sec"]) - float(frags[int(i)]["start_sec"])
-                                for i in range(len(frags)) if sims[i] >= min_typ))
+            core = [fmt(i) for i in keep[:top]]
+            outliers = [fmt(i) for i in keep[-top:]][::-1] if len(keep) > top else []
 
         match = []
         if B is not None:
