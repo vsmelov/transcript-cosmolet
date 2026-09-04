@@ -111,6 +111,43 @@ def rebuild(recording_id: int) -> Path | None:
     return md
 
 
+def recheck(log=print) -> int:
+    """Пересчитать пометку «спорная» по текущему правилу, не трогая имена.
+
+    Правило уверенности живёт в конфиге и меняется по мере накопления данных, а
+    флаг лежит в базе с момента обработки. Переигрывать ради него опознание —
+    это часы счёта; здесь достаточно сравнить вектор реплики с эталонами заново.
+    Имена не меняются: решение о том, КТО говорит, остаётся прежним.
+    """
+    base = embed_mod.known_speakers()
+    if not base:
+        log("база голосов пуста — пересчитывать нечего")
+        return 0
+    names = sorted(base)
+    B = np.array([base[n] for n in names])
+    rows = db.q("""SELECT id, speaker_name, embedding, ambiguous FROM segments
+                    WHERE embedding IS NOT NULL""") or []
+    changed = 0
+    for sid, name, emb, was in rows:
+        v = np.array(json.loads(emb) if isinstance(emb, str) else emb, dtype=np.float64)
+        n = np.linalg.norm(v)
+        if not n:
+            continue
+        sim = B @ (v / n)
+        order = np.argsort(-sim)
+        own = float(sim[names.index(name)]) if name in names else float(sim[order[0]])
+        margin = float(sim[order[0]]) - float(sim[order[1]]) if len(order) > 1 else 1.0
+        amb = own < config.UTT_CONF_OK or margin < config.UTT_TOP2_MARGIN
+        if bool(was) != amb:
+            db.q("UPDATE segments SET ambiguous = %s WHERE id = %s", amb, sid)
+            if not amb:
+                db.q("""UPDATE conflicts SET status='resolved', resolved_by='rule',
+                        resolved_at=now() WHERE segment_id = %s AND status='open'""", sid)
+            changed += 1
+    log(f"пометка «спорная» пересчитана: изменено {changed} из {len(rows)}")
+    return changed
+
+
 def rebuild_all(log=print) -> int:
     """Перечитать все записи, у которых есть сегменты."""
     ids = [r[0] for r in db.q("SELECT DISTINCT recording_id FROM segments ORDER BY 1") or []]

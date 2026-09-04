@@ -315,12 +315,13 @@ def assign_speakers(utts: list[Utterance], src: Path, base: dict[str, np.ndarray
 
         u.speaker = cluster_name
         u.confidence = round(cl_cos, 3)
-        if cl_cos < config.CONF_OK or margin < config.TOP2_MARGIN or mismatch:
+        if cl_cos < config.UTT_CONF_OK or margin < config.UTT_TOP2_MARGIN or mismatch:
             u.ambiguous = True
             u.detail = {"top": top,
                         "cluster_default": {"name": cluster_name, "cos": round(cl_cos, 3)},
                         "reason": ("cluster_mismatch" if mismatch else
-                                   "top2_close" if margin < config.TOP2_MARGIN else "low_confidence")}
+                                   "top2_close" if margin < config.UTT_TOP2_MARGIN
+                                   else "low_confidence")}
         if reassigned:
             u.detail = dict(u.detail or {}, reassigned=reassigned, top=top)
     return {"clusters": summary, "splits": split_count, "join": join_info}
