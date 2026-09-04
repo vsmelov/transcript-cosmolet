@@ -116,3 +116,11 @@ CREATE TABLE manual_labels (
     created_at   timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX manual_labels_rec_idx ON manual_labels(recording_id);
+
+-- Отметки «сделай сейчас» из интерфейса. UI не ходит в облако сам: токены Plaud и
+-- код клиента живут в воркере, поэтому кнопка оставляет здесь метку времени, а
+-- воркер проверяет её между плановыми обходами.
+CREATE TABLE runtime (
+    key text PRIMARY KEY,
+    at  timestamptz NOT NULL DEFAULT now()
+);

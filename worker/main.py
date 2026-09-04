@@ -21,6 +21,7 @@ import audio as audio_mod
 import clients
 import config
 import db
+import paths
 import diarize
 import embed as embed_mod
 import detect
@@ -54,8 +55,7 @@ signal.signal(signal.SIGINT, _stop)
 
 
 def artifact(recording_id: int, name: str, data: dict) -> str:
-    d = config.ARTIFACTS / f"rec_{recording_id}"
-    d.mkdir(parents=True, exist_ok=True)
+    d = paths.rec_dir(recording_id)
     p = d / f"{name}.json"
     p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return str(p)
@@ -215,7 +215,7 @@ def stage_resolve(rec_id: int, src: Path, utts: list) -> dict:
 
 
 def load_artifact(rec_id: int, name: str) -> dict | None:
-    p = config.ARTIFACTS / f"rec_{rec_id}" / f"{name}.json"
+    p = paths.rec_dir(rec_id, create=False) / f"{name}.json"
     if not p.is_file():
         return None
     try:

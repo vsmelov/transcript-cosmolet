@@ -16,6 +16,7 @@ import numpy as np
 
 import config
 import db
+import paths
 import embed as embed_mod
 from store import SCHEMA_MD, display_speaker
 
@@ -103,8 +104,7 @@ def rebuild(recording_id: int) -> Path | None:
                 lines.append(f"`{json.dumps(info, ensure_ascii=False)}`")
         lines.append("")
 
-    d = config.ARTIFACTS / f"rec_{recording_id}"
-    d.mkdir(parents=True, exist_ok=True)
+    d = paths.rec_dir(recording_id)
     (d / "SCHEMA.md").write_text(SCHEMA_MD, encoding="utf-8")
     md = d / "transcript.md"
     md.write_text("\n".join(lines), encoding="utf-8")

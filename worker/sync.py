@@ -165,14 +165,25 @@ def retry_failed(log=print) -> int:
 
 
 def sync_loop(log=print) -> None:
-    """Опрос облака Plaud: новые записи попадают в очередь скачивания."""
+    """Опрос облака Plaud: новые записи попадают в очередь скачивания.
+
+    Между плановыми обходами слушаем просьбу из интерфейса: человек только что
+    залил запись с телефона и ждёт её сейчас, а не через четверть часа.
+    """
+    last = 0.0
     while True:
         try:
-            sync(log)
-            retry_failed(log)
+            asked = db.q1("SELECT at FROM runtime WHERE key = 'sync_requested'")
+            requested = bool(asked and asked[0] and asked[0].timestamp() > last)
+            if requested or time.time() - last > config.PLAUD_SYNC_EVERY_SEC:
+                last = time.time()
+                if requested:
+                    log("запрошен обход облака из интерфейса")
+                sync(log)
+                retry_failed(log)
         except Exception as exc:
             log("синк с облаком:", str(exc)[:200])
-        time.sleep(config.PLAUD_SYNC_EVERY_SEC)
+        time.sleep(20)
 
 
 def downloader_loop(num: int = 1, log=print) -> None:

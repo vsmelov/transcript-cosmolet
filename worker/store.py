@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 import config
 import db
+import paths
 
 SCHEMA_MD = """# Формат транскриптов cosmolet
 
@@ -136,8 +137,7 @@ def save(recording_id: int, src_name: str, audio_path: Path, duration: float,
 
     applied = apply_manual(recording_id)
 
-    md_dir = config.ARTIFACTS / f"rec_{recording_id}"
-    md_dir.mkdir(parents=True, exist_ok=True)
+    md_dir = paths.rec_dir(recording_id)
     (md_dir / "SCHEMA.md").write_text(SCHEMA_MD, encoding="utf-8")
 
     lines = [f"# {src_name}", "",

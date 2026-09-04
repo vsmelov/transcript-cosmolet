@@ -924,8 +924,11 @@ def sync_now():
     запись» ждать этот цикл незачем. Заодно возвращаем в очередь всё, что зависло
     на скачивании: раздача Plaud умеет замирать, не разрывая соединения.
     """
-    import sys
-    sys.path.insert(0, "/worker")
+    # Просьба воркеру сходить в облако: сам UI туда не ходит — токены Plaud и код
+    # клиента живут в воркере. Он проверяет эту отметку раз в двадцать секунд.
+    _run(lambda c: c.execute("""
+        INSERT INTO runtime (key, at) VALUES ('sync_requested', now())
+        ON CONFLICT (key) DO UPDATE SET at = now()"""))
     stuck = _run(lambda c: c.execute("""
         UPDATE recordings SET status='pending_download'
          WHERE status='downloading'
@@ -940,7 +943,7 @@ def sync_now():
              WHERE stage='download' AND status='running'
                AND recording_id = ANY(%s)""", ([r[0] for r in stuck],)))
     return {"ok": True, "requeued": len(stuck or []),
-            "note": "воркер подхватит очередь в течение полуминуты"}
+            "note": "воркер сходит в облако в ближайшие 20 секунд"}
 
 
 @app.get("/api/review/queue")
