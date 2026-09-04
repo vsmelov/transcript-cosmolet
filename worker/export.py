@@ -148,6 +148,49 @@ def recheck(log=print) -> int:
     return changed
 
 
+def rename_stale(min_gain: float = 0.05, log=print) -> int:
+    """Обновить имена кластеров под нынешнюю базу голосов.
+
+    Имя присваивается в момент обработки и больше не пересматривается, а база
+    эталонов растёт: запись #50 получила «Матвея» в 16:32, после чего Владимиру
+    добавилось шесть эталонов, его центроид уточнился — и тот же кластер стал
+    уверенно его (0.77 против 0.68). Переигрывать ради этого опознание не нужно,
+    достаточно заново сравнить центроид кластера с базой.
+
+    Решения человека не трогаем: то, что подтверждено руками, важнее любого косинуса.
+    """
+    base = embed_mod.known_speakers()
+    if not base:
+        return 0
+    names = sorted(base)
+    B = np.array([base[n] for n in names])
+    rows = db.q("""SELECT recording_id, speaker_name, count(*) AS n,
+                          sum(end_sec - start_sec) AS sec, avg(embedding)::text AS cent,
+                          count(*) FILTER (WHERE detail->>'resolution' LIKE 'user:%%') AS manual
+                     FROM segments
+                    WHERE embedding IS NOT NULL AND speaker_name <> '[noise]'
+                    GROUP BY 1, 2 HAVING sum(end_sec - start_sec) >= 30""") or []
+    changed = 0
+    for rid, name, n, sec, cent, manual in rows:
+        if manual:
+            continue                      # кластер разбирал человек — не спорим с ним
+        v = np.array(json.loads(cent), dtype=np.float64)
+        v /= (np.linalg.norm(v) or 1)
+        sim = B @ v
+        order = np.argsort(-sim)
+        top, best = names[order[0]], float(sim[order[0]])
+        own = float(sim[names.index(name)]) if name in names else -1.0
+        if top == name or best < config.CONF_OK or best - own < min_gain:
+            continue
+        db.q("""UPDATE segments SET speaker_name = %s,
+                       speaker_id = (SELECT id FROM speakers WHERE name = %s)
+                 WHERE recording_id = %s AND speaker_name = %s""", top, top, rid, name)
+        log(f"#{rid}: «{name}» -> «{top}» ({best:.2f} против {own:.2f}), {n} реплик")
+        changed += 1
+    log(f"кластеров переименовано: {changed}")
+    return changed
+
+
 def rebuild_all(log=print) -> int:
     """Перечитать все записи, у которых есть сегменты."""
     ids = [r[0] for r in db.q("SELECT DISTINCT recording_id FROM segments ORDER BY 1") or []]
