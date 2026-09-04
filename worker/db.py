@@ -51,6 +51,18 @@ def job_start(recording_id: int, stage: str) -> int:
     return row[0]
 
 
+def job_progress(job_id: int, done_sec: float, total_sec: float) -> None:
+    """Отметка «прошёл столько-то секунд аудио из стольких-то».
+
+    Без неё длинная запись выглядит как чёрный ящик: джоба висит в running час, и
+    непонятно, движется она или залипла. Пишем прямо в meta джобы — читателю (UI)
+    этого достаточно, чтобы показать долю и посчитать ETA по фактической скорости.
+    """
+    q("""UPDATE jobs SET meta = meta || jsonb_build_object(
+             'done_sec', %s::float, 'total_sec', %s::float) WHERE id = %s""",
+      round(done_sec, 1), round(total_sec, 1), job_id)
+
+
 def job_done(job_id: int, cost: float = 0.0, artifact_path: str | None = None, meta: dict | None = None) -> None:
     q("""UPDATE jobs SET status='done', finished_at=now(), cost_usd=%s,
          artifact_path=%s, meta=meta || %s::jsonb WHERE id=%s""",

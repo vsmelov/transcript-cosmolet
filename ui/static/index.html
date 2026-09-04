@@ -2132,7 +2132,19 @@ async function loadProgress(){
         s.waiting ? ` · <span class="dim" title="записей ждёт своей очереди на этот этап">ждёт ${s.waiting} (${s.waiting_hours} ч)</span>` : ''}${
         s.failed ? ` · <span style="color:var(--red)" title="записи в этом этапе сейчас со статусом ошибки">${s.failed} ошиб.</span>` : ''}</span>
     </div>`).join('');
-  $('progBox').innerHTML = head + rows;
+  // Что жуётся прямо сейчас: этап, доля пройденного аудио и когда закончится.
+  // Без этого длинная запись выглядит зависшей — джоба висит час, и непонятно,
+  // движется она или залипла.
+  const now = (d.running || []).map(r => `
+    <div class="prow" style="align-items:baseline">
+      <span class="nm">${esc(STAGE_RU[r.stage] || r.stage)}</span>
+      <span style="flex:1">#${r.recording_id} · ${esc((r.title || '').slice(0, 54))}
+        <span class="dim">(${r.minutes} мин)</span></span>
+      <span class="num">${r.pct != null ? `<b style="color:var(--yellow)">${r.pct}%</b> · ` : ''}идёт ${r.elapsed_min} мин${
+        r.eta_min != null ? ` · осталось ~${r.eta_min} мин` : ''}</span>
+    </div>`).join('');
+  $('progBox').innerHTML = head + rows +
+    (now ? `<div class="sub" style="margin-top:8px">сейчас считается:</div>${now}` : '');
   loadBalances();
 }
 

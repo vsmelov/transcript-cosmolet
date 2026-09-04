@@ -129,7 +129,7 @@ def stage_detect(rec_id: int, src: Path, dur: float) -> dict:
         with tempfile.TemporaryDirectory(prefix="detect_") as td:
             wav = Path(td) / "full.wav"
             audio_mod.to_wav16k(src, wav)
-            smap = detect.detect(wav, dur)
+            smap = detect.detect(wav, dur, progress=lambda done: db.job_progress(job, done, dur))
         path = artifact(rec_id, "detect", {"speech_map": smap})
         db.job_done(job, 0.0, path, {"speech_sec": smap["speech_sec"],
                                      "vad_sec": smap["vad_sec"]})
@@ -147,6 +147,8 @@ def stage_quality(rec_id: int, src: Path, smap: dict) -> list:
     job = db.job_start(rec_id, "quality")
     try:
         utts, cost_total = [], 0.0
+        speech_total = sum(e - s for s, e in smap["regions"])
+        done_sec = 0.0
         for ri, (rs, re_) in enumerate(smap["regions"]):
             pos = rs
             # Хвост короче минимума пропускаем. Сложение pos += take накапливает
@@ -163,6 +165,8 @@ def stage_quality(rec_id: int, src: Path, smap: dict) -> list:
                 db.add_cost(cost, "quality", config.SCRIBE_MODEL, rec_id, f"region={ri}")
                 utts += diarize.utterances_from_scribe(resp, pos, f"r{ri}p{int(pos)}")
                 pos += take
+                done_sec += take
+                db.job_progress(job, done_sec, speech_total)
         utts.sort(key=lambda u: u.start)
         # words сохраняем: без них нельзя переиграть resolve (детектор смены говорящего
         # режет реплики по границам слов) без повторной оплаты транскрипции

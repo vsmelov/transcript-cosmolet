@@ -100,13 +100,23 @@ def classify(samples: np.ndarray, start: float, end: float) -> tuple[float, list
     return speech, tags
 
 
-def detect(wav_path: Path, total_sec: float) -> dict:
-    """Карта речи: регионы для дорогой модели + журнал решений для дебага в UI."""
+def detect(wav_path: Path, total_sec: float, progress=None) -> dict:
+    """Карта речи: регионы для дорогой модели + журнал решений для дебага в UI.
+
+    progress — колбэк «пройдено столько-то секунд аудио»: на многочасовой записи
+    этап идёт десятки минут, и без отметок он выглядит зависшим.
+    """
     samples = load_wav16k(wav_path)
     spans = vad_spans(samples)
 
     decisions, kept = [], []
+    reported = 0.0
     for s, e in spans:
+        # отмечаемся не чаще раза в минуту аудио: запись в базу на каждый всплеск
+        # (их тысячи) стоила бы дороже самой проверки
+        if progress and s - reported >= 60:
+            progress(s)
+            reported = s
         dur = e - s
         # Классификатор — самая дорогая часть этапа, поэтому зовём его с умом:
         #  - совсем короткие всплески (<0.8с) он всё равно не разберёт: доверяем VAD;

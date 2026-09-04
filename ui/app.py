@@ -1840,7 +1840,40 @@ def progress():
             "waiting": w.get("n", 0),
             "waiting_hours": round(float(w.get("hours") or 0), 1),
         })
+    # Что прямо сейчас в работе и сколько осталось. Скорость берём фактическую —
+    # по завершённым за последний час джобам того же этапа, а не по константе:
+    # длинная ночная запись и десятиминутный разговор идут совершенно по-разному.
+    speed = {r["stage"]: float(r["ratio"]) for r in q("""
+        SELECT j.stage,
+               sum(r.duration_sec) / nullif(sum(extract(epoch FROM j.finished_at - j.started_at)), 0) AS ratio
+          FROM jobs j JOIN recordings r ON r.id = j.recording_id
+         WHERE j.status = 'done' AND j.finished_at > now() - interval '2 hours'
+         GROUP BY 1""") if r["ratio"]}
+    running = []
+    for r in q("""SELECT j.id, j.stage, j.recording_id, j.meta, r.title, r.filename, r.duration_sec,
+                         extract(epoch FROM now() - j.started_at) AS elapsed
+                    FROM jobs j JOIN recordings r ON r.id = j.recording_id
+                   WHERE j.status = 'running' ORDER BY j.started_at"""):
+        meta = as_dict(r["meta"])
+        done, total = float(meta.get("done_sec") or 0), float(meta.get("total_sec") or 0)
+        pct = round(done / total * 100) if total else None
+        # ETA сначала по собственному прогрессу джобы, а если его ещё нет — по
+        # средней скорости этапа: пусть грубо, но не «неизвестно» целый час
+        eta = None
+        if done > 0 and total > done and r["elapsed"]:
+            eta = (total - done) / (done / float(r["elapsed"]))
+        elif speed.get(r["stage"]):
+            left = float(r["duration_sec"] or 0) / speed[r["stage"]] - float(r["elapsed"] or 0)
+            eta = max(left, 0)
+        running.append({"stage": r["stage"], "recording_id": r["recording_id"],
+                        "title": r["title"] or r["filename"],
+                        "minutes": round(float(r["duration_sec"] or 0) / 60),
+                        "pct": pct, "elapsed_min": round(float(r["elapsed"] or 0) / 60),
+                        "eta_min": None if eta is None else round(eta / 60)})
+
     return {
+        "running": running,
+        "speed": {k: round(v, 1) for k, v in speed.items()},
         "recs_total": total_recs,
         "hours_total": round(total_hours, 1),
         "gb_total": round(float(totals.get("gb") or 0), 1),
