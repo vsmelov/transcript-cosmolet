@@ -12,8 +12,11 @@ from datetime import timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import numpy as np
+
 import config
 import db
+import embed as embed_mod
 from store import SCHEMA_MD, display_speaker
 
 
@@ -30,6 +33,27 @@ def rebuild(recording_id: int) -> Path | None:
 
     local = ZoneInfo(config.LOCAL_TZ)
     at = (lambda sec: (started + timedelta(seconds=sec)).astimezone(local)) if started else None
+
+    # Кандидаты в базе хранятся только у спорных реплик (чтобы не раздувать её), а в
+    # транскрипте они нужны у каждой неопознанной: без них непонятно, кому фраза
+    # могла бы принадлежать. Здесь досчитываем недостающих по эталонам голосов.
+    base = embed_mod.known_speakers()
+    cands: dict[int, list] = {}
+    id_by_start: dict[float, int] = {}
+    if base:
+        names = sorted(base)
+        B = np.array([base[n] for n in names])
+        for sid, start, emb in db.q("""SELECT id, start_sec, embedding FROM segments
+                                        WHERE recording_id = %s AND embedding IS NOT NULL""",
+                                    recording_id) or []:
+            v = np.array(json.loads(emb) if isinstance(emb, str) else emb, dtype=np.float64)
+            n = np.linalg.norm(v)
+            if not n:
+                continue
+            sim = B @ (v / n)
+            cands[sid] = [{"name": names[i], "cos": round(float(sim[i]), 3)}
+                          for i in np.argsort(-sim)[:3]]
+            id_by_start[round(float(start), 3)] = sid
 
     by_speaker: dict[str, float] = {}
     manual = 0
@@ -55,13 +79,28 @@ def rebuild(recording_id: int) -> Path | None:
                  for n, v in sorted(by_speaker.items(), key=lambda kv: -kv[1])),
              "- Формат разметки: см. SCHEMA.md рядом", "", "---", ""]
 
-    for st, en, text, name, conf, amb, _ in segs:
+    for st, en, text, name, conf, amb, detail in segs:
         h, rem = divmod(int(float(st)), 3600)
         m, sec = divmod(rem, 60)
         clock = f" {at(float(st)):%H:%M:%S}" if at else ""
         c = "" if conf is None else f" · {float(conf):.2f}"
         flag = " ⚠️" if amb else ""
         lines.append(f"**[{h:02d}:{m:02d}:{sec:02d}{clock}] {display_speaker(name)}{c}{flag}:** {text}")
+        # Разбор под спорной или безымянной репликой — тот самый json из SCHEMA.md.
+        # Без него транскрипт молчит о том, КТО ЕЩЁ подходил на эту фразу, и читателю
+        # (человеку или агенту) нечем оценить, насколько имени можно верить.
+        d = detail if isinstance(detail, dict) else (json.loads(detail) if detail else {})
+        top = (d or {}).get("top") or cands.get(id_by_start.get(round(float(st), 3)), [])
+        if amb or name.startswith("S"):
+            info = {k: v for k, v in {
+                "top": top,
+                "cluster_default": (d or {}).get("cluster_default"),
+                "reason": (d or {}).get("reason"),
+                "judge": (d or {}).get("judge"),
+                "resolution": (d or {}).get("resolution"),
+            }.items() if v}
+            if info:
+                lines.append(f"`{json.dumps(info, ensure_ascii=False)}`")
         lines.append("")
 
     d = config.ARTIFACTS / f"rec_{recording_id}"
