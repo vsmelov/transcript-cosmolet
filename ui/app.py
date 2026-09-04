@@ -962,10 +962,11 @@ def enroll_candidates(recording_id: int):
                     seg = vecs[int(i)][0]
                     if seg["end_sec"] - seg["start_sec"] < min_sec:
                         continue
-                    out.append({"id": seg["id"], "start_sec": seg["start_sec"],
-                                "end_sec": seg["end_sec"], "text": (seg["text"] or "")[:140],
-                                "typicality": round(float(sims[int(i)]), 3),
-                                "ambiguous": bool(seg["ambiguous"])})
+                    # тот же формат «Фразы», что и везде: с текстом, плеером и
+                    # поштучными действиями — иначе чужака в кластере видно, а
+                    # переназначить его прямо здесь нечем
+                    out.append(utt(seg, src is not None,
+                                   typicality=round(float(sims[int(i)]), 3)))
                     if len(out) >= limit:
                         break
                 return out

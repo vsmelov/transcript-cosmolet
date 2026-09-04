@@ -1509,12 +1509,14 @@ async function loadGlobal(){
       <span style="flex:1"></span>
       <label class="dim" title="Насколько похожим на голос группы должен быть фрагмент, чтобы получить имя.
 Строже — меньше риска подписать чужую реплику, но часть речи останется безымянной.">строгость:
-        <select id="gtyp">
-          <option value="0.25"${GTYP == 0.25 ? ' selected' : ''}>мягко (0.25)</option>
-          <option value="0.35"${GTYP == 0.35 ? ' selected' : ''}>обычно (0.35)</option>
-          <option value="0.45"${GTYP == 0.45 ? ' selected' : ''}>строго (0.45)</option>
-          <option value="0.55"${GTYP == 0.55 ? ' selected' : ''}>очень строго (0.55)</option>
-        </select></label>
+        <select id="gtyp">${
+          // шаг мелкий и диапазон широкий: на похожих голосах разница между 0.6 и
+          // 0.7 решает, попадёт ли в человека соседняя реплика собеседника
+          [[0.25,'мягко'],[0.35,'обычно'],[0.45,'строго'],[0.55,'очень строго'],
+           [0.60,'жёстко'],[0.65,'жёстко+'],[0.70,'только близкие'],
+           [0.75,'почти эталонные'],[0.80,'предельно узко']]
+          .map(([v, t]) => `<option value="${v}"${GTYP == v ? ' selected' : ''}>${t} (${v.toFixed(2)})</option>`)
+          .join('')}</select></label>
     </div>` +
     GLOB.map((p, i) => {
       // тот же компонент «Фраза», что и на остальных экранах: с текстом, плеером и
@@ -1619,23 +1621,13 @@ async function loadFast(rid){
         style="border-color:${cohCol(x.cos)}"
         title="Отдать все ${g.count} реплик человеку «${esc(x.name)}» и добавить ядро в его эталоны">
         ${esc(x.name)} <b style="color:${cohCol(x.cos)}">${(+x.cos).toFixed(2)}</b></button>`).join(' ');
-    const frag = (c, kind) => `<button class="act" data-act="cplay" data-rid="${rid}"
-        data-start="${c.start_sec}" data-end="${c.end_sec}"
-        style="${kind === 'core' ? 'font-weight:600' : 'border-color:var(--yellow)'}"
-        title="${esc(c.text)}">▶ ${(c.end_sec - c.start_sec).toFixed(1)}с · ${c.typicality}</button>`;
-    const core = (g.core || []).map(c => frag(c, 'core')).join(' ');
-    // Аутсайдеры — реплики, дальше всех от центроида кластера. Если диаризация
-    // затащила сюда чужой голос, он всплывёт именно здесь, поэтому слушать нужно
-    // и их: ядро отвечает «кто это», аутсайдеры — «всё ли тут свои».
-    const outs = (g.outliers || []).map(c => frag(c, 'out')).join(' ');
-    // спорные — отдельный список: это пометка этапа опознания, а не мера типичности
-    const edge = (g.top || []).filter(t => t.ambiguous).slice(0, 4).map(t => `
-      <div class="prow" style="align-items:baseline">
-        <button class="act" data-act="cplay" data-rid="${rid}" data-start="${t.start_sec}"
-          data-end="${t.end_sec}">▶</button>
-        <span class="num">${(+t.confidence || 0).toFixed(2)}</span>
-        <span style="flex:1">${esc((t.text || '').slice(0, 130))}</span>
-      </div>`).join('');
+    // тот же компонент «Фраза», что и на остальных экранах: текст, плеер и
+    // поштучные действия. Голые кнопки позволяли только послушать, а увидев
+    // чужого в кластере, его хочется тут же и переназначить.
+    const frag = c => renderUtterance(c, {confirm: named ? g.label : ((m[0] || {}).name || '')});
+    const core = (g.core || []).map(frag).join('');
+    const outs = (g.outliers || []).map(frag).join('');
+    const edge = (g.top || []).filter(t => t.ambiguous).slice(0, 4).map(frag).join('');
     return `<div class="card" data-i="${i}" style="margin-bottom:10px">
       <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
         <b style="color:${spkCol(g.label)};font-size:15px">${esc(speakerLabel(g.label))}</b>
@@ -1643,9 +1635,9 @@ async function loadFast(rid){
           ${g.ambiguous_count ? `· спорных ${g.ambiguous_count}` : ''}</span>
       </div>
       <div class="sub" style="margin-top:6px">ядро — так этот голос звучит обычно:</div>
-      <div style="margin-top:2px">${core || '<span class="dim">ядро не выделено (нет векторов)</span>'}</div>
+      <div>${core || '<span class="dim">ядро не выделено (нет векторов)</span>'}</div>
       ${outs ? `<div class="sub" style="margin-top:6px">дальше всех от ядра — если чужое затесалось,
-        оно здесь:</div><div style="margin-top:2px">${outs}</div>` : ''}
+        оно здесь:</div><div>${outs}</div>` : ''}
       <div class="rsrow" style="margin-top:8px">
         ${named ? `<button class="act" data-act="fok" data-i="${i}"
             title="Подтвердить: это ${esc(g.label)}. Ядро уйдёт в эталоны, спорные пометки снимутся.">
@@ -1657,8 +1649,7 @@ async function loadFast(rid){
         <button class="act" data-act="ftrash" data-i="${i}"
           title="Весь кластер — шум или фон. Эталоны не создаются.">мусор</button>
       </div>
-      ${edge ? `<div class="sub" style="margin-top:8px">спорные реплики кластера
-        (разобрать поштучно можно в подробном разборе):${edge}</div>` : ''}
+      ${edge ? `<div class="sub" style="margin-top:8px">спорные реплики кластера:</div>${edge}` : ''}
       <div class="eres sub" style="margin-top:6px"></div>
     </div>`;
   }).join('') || '<div class="dim">в этой записи нет заметных кластеров</div>';
