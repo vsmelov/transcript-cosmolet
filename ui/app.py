@@ -946,6 +946,64 @@ def sync_now():
             "note": "воркер сходит в облако в ближайшие 20 секунд"}
 
 
+# ---------- Бенчмарк: честная разметка для сравнения моделей ----------
+# Подтверждения из обычной разметки сделаны ПОВЕРХ нашей же догадки — человек чаще
+# соглашается с предложенным, чем спорит, и такой набор льстит текущей модели. Здесь
+# фрагменты выбраны заранее, без подсказки, кто это, и размечаются ушами с нуля.
+# Именно на них потом гоняются разные модели и способы сравнения.
+
+@app.get("/api/benchmark/next")
+def benchmark_next():
+    total = q1("SELECT count(*) AS n FROM benchmark_items")["n"]
+    done = q1("SELECT count(*) AS n FROM benchmark_labels")["n"]
+    row = q1(f"""SELECT {SEG_COLS}, b.dur_bucket, b.noise_hint, b.why, b.ord
+                   FROM benchmark_items b JOIN segments s ON s.id = b.segment_id
+                  WHERE NOT EXISTS (SELECT 1 FROM benchmark_labels l WHERE l.segment_id = b.segment_id)
+                  ORDER BY b.ord LIMIT 1""")
+    if row is None:
+        return {"item": None, "done": done, "total": total}
+    people = [r["name"] for r in q("SELECT name FROM speakers ORDER BY name")]
+    # подсказку кандидатов НЕ показываем — она сместила бы ответ; людей даём по алфавиту
+    return {"item": {"segment_id": row["id"], "recording_id": row["recording_id"],
+                     "start_sec": row["start_sec"], "end_sec": row["end_sec"],
+                     "text": row["text"], "dur_bucket": row["dur_bucket"],
+                     "noise_hint": row["noise_hint"], "why": row["why"], "ord": row["ord"]},
+            "people": people, "done": done, "total": total}
+
+
+@app.post("/api/benchmark/label")
+def benchmark_label(body: dict):
+    b = body or {}
+    sid = int(b.get("segment_id"))
+    name = str(b.get("name", "")).strip()
+    cond = str(b.get("condition", "")).strip()
+    if not name or cond not in ("clean", "noisy"):
+        raise HTTPException(400, "name and condition (clean|noisy) are required")
+    if name not in ("?", "[noise]"):
+        _run(lambda c: c.execute("INSERT INTO speakers (name) VALUES (%s) ON CONFLICT (name) DO NOTHING", (name,)))
+    _run(lambda c: c.execute("""
+        INSERT INTO benchmark_labels (segment_id, speaker_name, condition)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (segment_id) DO UPDATE SET speaker_name = EXCLUDED.speaker_name,
+            condition = EXCLUDED.condition, labeled_at = now()""", (sid, name, cond)))
+    return {"ok": True}
+
+
+@app.post("/api/benchmark/undo")
+def benchmark_undo():
+    row = _run(lambda c: c.execute("""DELETE FROM benchmark_labels WHERE segment_id =
+        (SELECT segment_id FROM benchmark_labels ORDER BY labeled_at DESC LIMIT 1) RETURNING segment_id""").fetchone())
+    return {"ok": True, "undone": row[0] if row else None}
+
+
+@app.get("/api/benchmark/stats")
+def benchmark_stats():
+    return {"by_name": q("""SELECT speaker_name AS name, condition, count(*) AS n
+                              FROM benchmark_labels GROUP BY 1, 2 ORDER BY 1, 2"""),
+            "total": q1("SELECT count(*) AS n FROM benchmark_items")["n"],
+            "done": q1("SELECT count(*) AS n FROM benchmark_labels")["n"]}
+
+
 @app.get("/api/review/queue")
 def review_queue():
     """Записи, которые ещё ждут разметки, — самые «дешёвые» сверху.

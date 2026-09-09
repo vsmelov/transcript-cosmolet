@@ -160,6 +160,9 @@ button.act.cand{font-size:11px;padding:2px 7px}
 .candg button.act.cand:first-child{border-radius:5px 0 0 5px;border-right:none}
 .candg button.act.cand.star{border-radius:0 5px 5px 0;padding:2px 6px;color:var(--yellow)}
 .candg button.act.cand:hover{background:var(--panel)}
+
+kbd{display:inline-block;border:1px solid var(--border);border-radius:4px;padding:0 5px;font-size:11px;
+  color:var(--dim);background:var(--panel);margin-right:2px}
 </style>
 </head>
 <body>
@@ -217,6 +220,7 @@ button.act.cand{font-size:11px;padding:2px 7px}
       <button data-vsec="unknown">Кого не хватает</button>
       <button data-vsec="fast">⚡ Быстрая разметка</button>
       <button data-vsec="global">🌍 Голоса всего архива</button>
+      <button data-vsec="bench">🎯 Бенчмарк</button>
     </div>
     <div id="vsec-people" class="vsec" style="display:flex;gap:16px;align-items:flex-start">
       <div style="flex:0 0 250px">
@@ -238,6 +242,9 @@ button.act.cand{font-size:11px;padding:2px 7px}
     <div id="vsec-sugg" class="vsec" style="display:none">
       <div id="suggFilter"></div>
       <div id="suggBody"><div class="dim">загрузка…</div></div>
+    </div>
+    <div id="vsec-bench" class="vsec" style="display:none">
+      <div id="benchBody"><div class="dim">загрузка…</div></div>
     </div>
     <div id="vsec-global" class="vsec" style="display:none">
       <div id="globalBody"><div class="dim">загрузка…</div></div>
@@ -1107,6 +1114,7 @@ function parsePath(h){
     if (p[1] === 'suggestions') return {tab:'voices', vsec:'sugg'};
     if (p[1] === 'unknown') return {tab:'voices', vsec:'unknown'};
     if (p[1] === 'global') return {tab:'voices', vsec:'global'};
+    if (p[1] === 'bench') return {tab:'voices', vsec:'bench'};
     if (p[1] === 'fast') return {tab:'voices', vsec:'fast',
       rid: /^\d+$/.test(p[2] || '') ? +p[2] : null};
     return {tab:'voices', vsec:'people', spId: /^\d+$/.test(p[1] || '') ? +p[1] : null};
@@ -1456,6 +1464,8 @@ async function showVoices(r){
   } else if (VSEC === 'global'){
     if (!VPEOPLE.length) await loadPeople();
     await loadGlobal();
+  } else if (VSEC === 'bench'){
+    await loadBench();
   } else {
     if (!VPEOPLE.length) await loadPeople();
     await loadSugg();
@@ -1516,6 +1526,87 @@ async function loadUnknownCount(){
       : '';
   } catch (e) {}
 }
+
+// ---------- Бенчмарк ----------
+// Разметка «с нуля», ушами, без подсказки, кто это: подтверждения из обычной разметки
+// сделаны поверх нашей же догадки и льстят текущей модели. Кандидатов здесь нет
+// намеренно. Клавиши: пробел — послушать ещё раз, 1-9 — люди, N — не знаю, X — шум,
+// C/D — чисто/шумно, Z — отменить последний.
+let BENCH = null;
+async function loadBench(){
+  const box = $('benchBody');
+  let d;
+  try { d = await api('/api/benchmark/next'); } catch (e) { fail(box, e); return; }
+  BENCH = d;
+  if (!d.item){
+    box.innerHTML = `<div class="card">Готово: размечено ${d.done} из ${d.total}.
+      Дальше — мой ход: гоняю модели по этому набору.</div>`;
+    return;
+  }
+  const it = d.item;
+  const cond = it.noise_hint === 'noisy' ? 'noisy' : 'clean';
+  const hot = (i) => i < 9 ? `<kbd>${i + 1}</kbd> ` : '';
+  box.innerHTML = `
+    <div class="card">
+      <div style="display:flex;gap:12px;align-items:baseline;flex-wrap:wrap">
+        <b style="font-size:15px">${d.done + 1} / ${d.total}</b>
+        <span class="dim">#${it.recording_id} · ${(it.end_sec - it.start_sec).toFixed(1)}с ·
+          ${ {short:'короткая', mid:'средняя', long:'длинная'}[it.dur_bucket] } ·
+          отобран как: ${esc(it.why)}</span>
+        <span style="flex:1"></span>
+        <button class="act" data-act="bundo" title="отменить последнюю метку (Z)">↶ отменить</button>
+      </div>
+      <div class="rsrow" style="margin-top:8px">
+        <button class="act" data-act="bplay" data-rid="${it.recording_id}" data-start="${it.start_sec}"
+          data-end="${it.end_sec}" style="font-size:16px;padding:8px 16px"><kbd>пробел</kbd> ▶ послушать</button>
+        <span style="font-size:15px">${esc(it.text || '')}</span>
+      </div>
+      <div class="sub" style="margin-top:12px">кто говорит?</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">
+        ${d.people.map((n, i) => `<button class="act" data-act="bname" data-name="${esc(n)}">${hot(i)}${esc(n)}</button>`).join('')}
+        <input data-role="bnew" placeholder="новый человек" style="width:150px">
+        <button class="act" data-act="bnewgo">завести и отметить</button>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
+        <button class="act" data-act="bname" data-name="?"><kbd>N</kbd> не знаю / не разобрать</button>
+        <button class="act" data-act="bname" data-name="[noise]"><kbd>X</kbd> шум, не речь</button>
+      </div>
+      <div class="sub" style="margin-top:12px">условия записи (по уверенности распознавания я предположил:
+        <b>${cond === 'noisy' ? 'шумно' : 'чисто'}</b> — поправь, если не так)</div>
+      <div style="display:flex;gap:12px;margin-top:4px">
+        <label class="chk"><input type="radio" name="bcond" value="clean" ${cond === 'clean' ? 'checked' : ''}> <kbd>C</kbd> чисто: рядом, тихо, разборчиво</label>
+        <label class="chk"><input type="radio" name="bcond" value="noisy" ${cond === 'noisy' ? 'checked' : ''}> <kbd>D</kbd> шумно: далеко, улица, застолье, перебивают</label>
+      </div>
+      <div class="eres sub" style="margin-top:8px"></div>
+    </div>`;
+  // сразу играем: разметка идёт на слух, лишний клик на каждый фрагмент утомляет
+  play({src: recSrc(it.recording_id), start: it.start_sec, end: it.end_sec, title: 'бенчмарк'});
+}
+
+async function benchLabel(name){
+  if (!BENCH || !BENCH.item) return;
+  const cond = (document.querySelector('input[name="bcond"]:checked') || {}).value || 'clean';
+  try {
+    await api('/api/benchmark/label', {method:'POST',
+      body:{segment_id: BENCH.item.segment_id, name, condition: cond}});
+    await loadBench();
+  } catch (e){ toast('Не сохранилось', errText(e), 'err'); }
+}
+
+document.addEventListener('keydown', e => {
+  if (VSEC !== 'bench' || !BENCH || !BENCH.item) return;
+  if (e.target.matches('input,textarea,select')) return;
+  const it = BENCH.item;
+  if (e.code === 'Space'){ e.preventDefault();
+    play({src: recSrc(it.recording_id), start: it.start_sec, end: it.end_sec, title: 'бенчмарк'}); return; }
+  if (e.key >= '1' && e.key <= '9'){ const n = BENCH.people[+e.key - 1]; if (n) benchLabel(n); return; }
+  const k = e.key.toLowerCase();
+  if (k === 'n') benchLabel('?');
+  else if (k === 'x') benchLabel('[noise]');
+  else if (k === 'c') document.querySelector('input[name="bcond"][value="clean"]').checked = true;
+  else if (k === 'd') document.querySelector('input[name="bcond"][value="noisy"]').checked = true;
+  else if (k === 'z') api('/api/benchmark/undo', {method:'POST'}).then(loadBench);
+});
 
 // ---------- Голоса всего архива ----------
 // Один человек — одна строка на весь архив, а не строка на каждую запись, где он
@@ -2190,7 +2281,7 @@ document.addEventListener('click', async e => {
   if (vb){
     const h = {people:'voices', enroll:'voices/enroll', sugg:'voices/suggestions',
                unknown:'voices/unknown', fast:'voices/fast',
-               global:'voices/global'}[vb.dataset.vsec];
+               global:'voices/global', bench:'voices/bench'}[vb.dataset.vsec];
     go(h, false).catch(() => {});
     return;
   }
@@ -2309,6 +2400,14 @@ document.addEventListener('click', async e => {
           setTimeout(() => loadProgress(), 4000);
         } catch (e){ t.set('Не получилось', errText(e), 'err'); }
       }
+      else if (a === 'bplay') play({src: recSrc(b.dataset.rid), btn: b,
+        start: +b.dataset.start, end: +b.dataset.end, title: 'бенчмарк'});
+      else if (a === 'bname') await benchLabel(b.dataset.name);
+      else if (a === 'bnewgo'){
+        const nm = (b.closest('.card').querySelector('[data-role="bnew"]').value || '').trim();
+        if (nm) await benchLabel(nm);
+      }
+      else if (a === 'bundo'){ await api('/api/benchmark/undo', {method:'POST'}); await loadBench(); }
       else if (a === 'gpick') await globalAssign(b.closest('.card'), b.dataset.name);
       else if (a === 'gtrash') await globalAssign(b.closest('.card'), '[noise]');
       else if (a === 'gnew'){

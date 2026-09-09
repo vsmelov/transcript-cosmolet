@@ -124,3 +124,22 @@ CREATE TABLE runtime (
     key text PRIMARY KEY,
     at  timestamptz NOT NULL DEFAULT now()
 );
+
+-- Бенчмарк опознания голосов. Фрагменты отобраны заранее (стратификация по длине,
+-- по шуму и по «трудности» — кандидаты вплотную) и размечаются человеком ушами БЕЗ
+-- подсказки, кто это: подтверждения из обычной разметки сделаны поверх нашей же
+-- догадки и льстят текущей модели. На этом наборе сравниваются модели и способы
+-- сравнения (worker/bench_speakers.py).
+CREATE TABLE benchmark_items (
+    segment_id  bigint PRIMARY KEY REFERENCES segments(id) ON DELETE CASCADE,
+    ord         int NOT NULL,
+    dur_bucket  text NOT NULL,        -- short | mid | long
+    noise_hint  text NOT NULL,        -- clean | mid | noisy | unknown (по уверенности ASR)
+    why         text NOT NULL DEFAULT ''
+);
+CREATE TABLE benchmark_labels (
+    segment_id   bigint PRIMARY KEY REFERENCES segments(id) ON DELETE CASCADE,
+    speaker_name text NOT NULL,       -- имя, '?' (не разобрать) или '[noise]'
+    condition    text NOT NULL,       -- clean | noisy, по мнению человека
+    labeled_at   timestamptz NOT NULL DEFAULT now()
+);
