@@ -21,6 +21,7 @@ import audio as audio_mod
 import clients
 import config
 import db
+import notify
 import paths
 import diarize
 import embed as embed_mod
@@ -288,12 +289,30 @@ def run_stage(stage: str, rec) -> None:
             md = store.save(rec_id, filename, audio_path, dur, utts, info["clusters"], smap)
             db.job_done(job, 0.0, str(md))
             log(f"=== готово #{rec_id}: {md}")
+            # человеку сообщаем сразу: иначе о готовности он узнаёт, только если сам зайдёт
+            try:
+                named = sum(u.end - u.start for u in utts
+                            if not u.speaker.startswith("S") and u.speaker != "[noise]")
+                total = sum(u.end - u.start for u in utts) or 1
+                spent = db.q1("SELECT coalesce(sum(usd),0) FROM costs WHERE recording_id=%s", rec_id)
+                title = db.q1("SELECT coalesce(title, filename) FROM recordings WHERE id=%s", rec_id)[0]
+                notify.recording_done(
+                    rec_id, title, dur / 60,
+                    [c["name"] for c in info["clusters"] if not c["name"].startswith("S")],
+                    named / total * 100, float(spent[0] if spent else 0))
+            except Exception as exc:
+                log("уведомление не ушло:", str(exc)[:120])
         db.q("UPDATE recordings SET status=%s WHERE id=%s", STAGES[stage]["next"], rec_id)
     except clients.QuotaExceeded:
         raise                       # обрабатывается в stage_loop: запись ждёт, не падает
     except Exception as exc:
         db.q("UPDATE recordings SET status='failed' WHERE id=%s", rec_id)
         log(f"!!! #{rec_id} на этапе {stage}: {exc}")
+        try:
+            title = db.q1("SELECT coalesce(title, filename) FROM recordings WHERE id=%s", rec_id)[0]
+            notify.recording_failed(rec_id, title, stage, str(exc))
+        except Exception:
+            pass
 
 
 def stage_loop(stage: str, num: int) -> None:
@@ -325,6 +344,8 @@ def stage_loop(stage: str, num: int) -> None:
                     db.q("UPDATE recordings SET status=%s WHERE id=%s",
                          STAGES[stage]["wait"], rec[0])
                     log(f"{stage}: кончилась квота провайдера, пауза 10 мин — {exc}")
+                    notify.pipeline_problem("Кончилась квота провайдера",
+                                            f"этап {stage}: {exc}")
                     time.sleep(600)
             else:
                 time.sleep(POLL_SEC)

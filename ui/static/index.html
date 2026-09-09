@@ -1550,6 +1550,7 @@ async function loadBench(){
     <div class="card">
       <div style="display:flex;gap:12px;align-items:baseline;flex-wrap:wrap">
         <b style="font-size:15px">${d.done + 1} / ${d.total}</b>
+        ${d.skipped ? `<span class="dim">пропущено ${d.skipped}</span>` : ''}
         <span class="dim">#${it.recording_id} · ${(it.end_sec - it.start_sec).toFixed(1)}с ·
           ${ {short:'короткая', mid:'средняя', long:'длинная'}[it.dur_bucket] } ·
           отобран как: ${esc(it.why)}</span>
@@ -1574,6 +1575,9 @@ async function loadBench(){
           title="Речь есть, но кто говорит, не разобрать даже тебе: слишком коротко, тихо, наложение. Из оценки точности исключается."><kbd>N</kbd> не разобрать</button>
         <button class="act" data-act="bname" data-name="[noise]"
           title="Это вообще не речь: музыка, телевизор, шорохи, тишина. Оценивает детектор речи, а не опознание."><kbd>X</kbd> шум, не речь</button>
+        <span style="flex:1"></span>
+        <button class="act" data-act="bname" data-name="[skip]"
+          title="Пропустить: не помню, кто это, или разбираться не хочу. Фрагмент уходит из очереди и в оценке не участвует."><kbd>0</kbd> пропустить →</button>
       </div>
       <div class="sub" style="margin-top:12px">условия записи (по уверенности распознавания я предположил:
         <b>${cond === 'noisy' ? 'шумно' : 'чисто'}</b> — поправь, если не так)</div>
@@ -1610,6 +1614,7 @@ document.addEventListener('keydown', e => {
   else if (k === 'x') benchLabel('[noise]');
   else if (k === 'c') document.querySelector('input[name="bcond"][value="clean"]').checked = true;
   else if (k === 'd') document.querySelector('input[name="bcond"][value="noisy"]').checked = true;
+  else if (k === '0' || e.key === 'ArrowRight') benchLabel('[skip]');
   else if (k === 'z') api('/api/benchmark/undo', {method:'POST'}).then(loadBench);
 });
 

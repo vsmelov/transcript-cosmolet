@@ -27,6 +27,11 @@ SCRIBE_MODEL = os.environ.get("SCRIBE_MODEL", "scribe_v2")
 
 DAILY_BUDGET_USD = float(os.environ.get("DAILY_BUDGET_USD", "2.0"))
 
+# Уведомления в Telegram. Получателя можно не задавать: он определится сам, когда
+# человек нажмёт Start в боте (см. notify.chat_id).
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+
 # Время начала записи Plaud отдаёт в UTC — проверено на ночных записях: у записи с
 # start_at 09-02 22:51 облако ставит в название «09-03», и с поправкой +4 это 02:51
 # ночи, что сходится с одиннадцатичасовой длительностью. Названия же облако делает

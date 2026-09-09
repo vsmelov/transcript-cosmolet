@@ -17,6 +17,8 @@ x-worker-env: &worker-env
   DATA_DIR: /data
   EMBED_MODEL: /models/campplus_zh_en_advanced.onnx
   PLAUD_TOKENS: /plaud/tokens.json
+  TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+  TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
   # Размеры пулов — в одном месте: воркер по ним запускает потоки, UI по ним
   # показывает загрузку. Разъедутся — интерфейс будет врать про «6 из 4».
   DOWNLOAD_WORKERS: ${DOWNLOAD_WORKERS:-6}

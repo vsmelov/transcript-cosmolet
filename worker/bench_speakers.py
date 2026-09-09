@@ -32,7 +32,9 @@ import sherpa_onnx
 import audio as audio_mod
 import db
 
-SKIP_LABELS = {"?", "[noise]"}
+# «?» — человек сам не разобрал, «[noise]» — не речь, «[skip]» — размечать не стал,
+# «[stranger]» — незнакомый голос; последний меряется отдельно (ложные имена)
+SKIP_LABELS = {"?", "[noise]", "[skip]"}
 
 
 def load_truth():

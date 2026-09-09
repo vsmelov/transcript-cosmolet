@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 import config
 import db
+import notify
 import plaud
 
 LOCAL = ZoneInfo(config.LOCAL_TZ)
@@ -59,6 +60,8 @@ def sync(log=print) -> dict:
             items = plaud.list_files(page=page, page_size=100)
         except Exception as exc:
             log(f"синк: не удалось получить список (стр. {page}): {exc}")
+            # молчаливая поломка синка уже стоила пяти дней неподхваченных записей
+            notify.pipeline_problem("Облако Plaud не отвечает", str(exc))
             break
         if not items:
             break

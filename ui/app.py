@@ -960,15 +960,16 @@ def benchmark_next():
                    FROM benchmark_items b JOIN segments s ON s.id = b.segment_id
                   WHERE NOT EXISTS (SELECT 1 FROM benchmark_labels l WHERE l.segment_id = b.segment_id)
                   ORDER BY b.ord LIMIT 1""")
+    skipped = q1("SELECT count(*) AS n FROM benchmark_labels WHERE speaker_name = '[skip]'")["n"]
     if row is None:
-        return {"item": None, "done": done, "total": total}
+        return {"item": None, "done": done, "total": total, "skipped": skipped}
     people = [r["name"] for r in q("SELECT name FROM speakers ORDER BY name")]
     # подсказку кандидатов НЕ показываем — она сместила бы ответ; людей даём по алфавиту
     return {"item": {"segment_id": row["id"], "recording_id": row["recording_id"],
                      "start_sec": row["start_sec"], "end_sec": row["end_sec"],
                      "text": row["text"], "dur_bucket": row["dur_bucket"],
                      "noise_hint": row["noise_hint"], "why": row["why"], "ord": row["ord"]},
-            "people": people, "done": done, "total": total}
+            "people": people, "done": done, "total": total, "skipped": skipped}
 
 
 @app.post("/api/benchmark/label")
@@ -979,7 +980,8 @@ def benchmark_label(body: dict):
     cond = str(b.get("condition", "")).strip()
     if not name or cond not in ("clean", "noisy"):
         raise HTTPException(400, "name and condition (clean|noisy) are required")
-    if name not in ("?", "[noise]", "[stranger]"):
+    # служебные метки — не люди, заводить их в базу спикеров нельзя
+    if name not in ("?", "[noise]", "[stranger]", "[skip]"):
         _run(lambda c: c.execute("INSERT INTO speakers (name) VALUES (%s) ON CONFLICT (name) DO NOTHING", (name,)))
     _run(lambda c: c.execute("""
         INSERT INTO benchmark_labels (segment_id, speaker_name, condition)
