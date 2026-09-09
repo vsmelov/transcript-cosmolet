@@ -979,7 +979,7 @@ def benchmark_label(body: dict):
     cond = str(b.get("condition", "")).strip()
     if not name or cond not in ("clean", "noisy"):
         raise HTTPException(400, "name and condition (clean|noisy) are required")
-    if name not in ("?", "[noise]"):
+    if name not in ("?", "[noise]", "[stranger]"):
         _run(lambda c: c.execute("INSERT INTO speakers (name) VALUES (%s) ON CONFLICT (name) DO NOTHING", (name,)))
     _run(lambda c: c.execute("""
         INSERT INTO benchmark_labels (segment_id, speaker_name, condition)

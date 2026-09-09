@@ -106,8 +106,10 @@ def sync(log=print) -> dict:
         if len(items) < 100:
             break
         page += 1
-    if added or renamed:
-        log(f"синк: в облаке {seen}, новых {added}, переименовано {renamed}")
+    # Отчитываемся каждый раз, а не только когда есть новое: молчание обхода
+    # неотличимо от обхода, который не состоялся, и пять дней мёртвого токена
+    # прошли незамеченными именно поэтому.
+    log(f"синк: в облаке {seen}, новых {added}, переименовано {renamed}")
     return {"seen": seen, "added": added, "renamed": renamed}
 
 

@@ -1568,8 +1568,12 @@ async function loadBench(){
         <button class="act" data-act="bnewgo">завести и отметить</button>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
-        <button class="act" data-act="bname" data-name="?"><kbd>N</kbd> не знаю / не разобрать</button>
-        <button class="act" data-act="bname" data-name="[noise]"><kbd>X</kbd> шум, не речь</button>
+        <button class="act" data-act="bname" data-name="[stranger]"
+          title="Речь разборчива, но этого человека нет в списке и ты его не знаешь. Проверяет, умеет ли система НЕ навешивать чужое имя."><kbd>S</kbd> незнакомый человек</button>
+        <button class="act" data-act="bname" data-name="?"
+          title="Речь есть, но кто говорит, не разобрать даже тебе: слишком коротко, тихо, наложение. Из оценки точности исключается."><kbd>N</kbd> не разобрать</button>
+        <button class="act" data-act="bname" data-name="[noise]"
+          title="Это вообще не речь: музыка, телевизор, шорохи, тишина. Оценивает детектор речи, а не опознание."><kbd>X</kbd> шум, не речь</button>
       </div>
       <div class="sub" style="margin-top:12px">условия записи (по уверенности распознавания я предположил:
         <b>${cond === 'noisy' ? 'шумно' : 'чисто'}</b> — поправь, если не так)</div>
@@ -1602,6 +1606,7 @@ document.addEventListener('keydown', e => {
   if (e.key >= '1' && e.key <= '9'){ const n = BENCH.people[+e.key - 1]; if (n) benchLabel(n); return; }
   const k = e.key.toLowerCase();
   if (k === 'n') benchLabel('?');
+  else if (k === 's') benchLabel('[stranger]');
   else if (k === 'x') benchLabel('[noise]');
   else if (k === 'c') document.querySelector('input[name="bcond"][value="clean"]').checked = true;
   else if (k === 'd') document.querySelector('input[name="bcond"][value="noisy"]').checked = true;
