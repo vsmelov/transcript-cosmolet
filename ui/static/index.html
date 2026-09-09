@@ -1533,6 +1533,23 @@ async function loadUnknownCount(){
 // намеренно. Клавиши: пробел — послушать ещё раз, 1-9 — люди, N — не знаю, X — шум,
 // C/D — чисто/шумно, Z — отменить последний.
 let BENCH = null;
+
+// Соседние реплики фрагмента. Имена здесь — то, что проставила система, и они
+// вполне могут быть неверными: показываем их приглушённо и подписываем как догадку,
+// иначе разметка превратится в согласие с нашей же ошибкой.
+function ctxRows(rows, rid){
+  if (!rows || !rows.length) return '<div class="dim" style="padding-left:8px">— нет —</div>';
+  return rows.map(r => `
+    <div class="prow" style="align-items:baseline;padding:2px 0">
+      <button class="act" data-act="bplay" data-rid="${rid}" data-start="${r.start_sec}"
+        data-end="${r.end_sec}" title="послушать эту реплику">▶</button>
+      <span class="dim mono" style="min-width:52px">${fmtT(r.start_sec)}</span>
+      <span class="dim" style="min-width:150px;color:${spkCol(r.speaker_name)};opacity:.75">
+        ${esc(speakerLabel(r.speaker_name))}</span>
+      <span style="flex:1">${esc((r.text || '').slice(0, 160))}</span>
+    </div>`).join('');
+}
+
 async function loadBench(){
   const box = $('benchBody');
   let d;
@@ -1551,17 +1568,26 @@ async function loadBench(){
       <div style="display:flex;gap:12px;align-items:baseline;flex-wrap:wrap">
         <b style="font-size:15px">${d.done + 1} / ${d.total}</b>
         ${d.skipped ? `<span class="dim">пропущено ${d.skipped}</span>` : ''}
-        <span class="dim">#${it.recording_id} · ${(it.end_sec - it.start_sec).toFixed(1)}с ·
+        <span class="dim">#${it.recording_id} ${esc((it.rec_title || '').slice(0, 40))} · ${(it.end_sec - it.start_sec).toFixed(1)}с ·
           ${ {short:'короткая', mid:'средняя', long:'длинная'}[it.dur_bucket] } ·
           отобран как: ${esc(it.why)}</span>
         <span style="flex:1"></span>
         <button class="act" data-act="bundo" title="отменить последнюю метку (Z)">↶ отменить</button>
       </div>
-      <div class="rsrow" style="margin-top:8px">
+      <div class="sub" style="margin-top:10px">до этого — <i>имена проставила система, это её догадка</i>:</div>
+      ${ctxRows(it.before, it.recording_id)}
+      <div class="rsrow" style="margin-top:6px;padding:8px;border:1px solid var(--acc);border-radius:6px">
         <button class="act" data-act="bplay" data-rid="${it.recording_id}" data-start="${it.start_sec}"
           data-end="${it.end_sec}" style="font-size:16px;padding:8px 16px"><kbd>пробел</kbd> ▶ послушать</button>
-        <span style="font-size:15px">${esc(it.text || '')}</span>
+        <span style="font-size:15px;flex:1">${esc(it.text || '')}</span>
+        <button class="act" data-act="bplayctx" data-rid="${it.recording_id}"
+          data-start="${(it.before || []).length ? it.before[0].start_sec : it.start_sec}"
+          data-end="${(it.after || []).length ? it.after[it.after.length - 1].end_sec : it.end_sec}"
+          title="Проиграть весь кусок вместе с соседними репликами — так слышно, кто кому отвечает">
+          <kbd>K</kbd> ▶ с контекстом</button>
       </div>
+      <div class="sub" style="margin-top:6px">после:</div>
+      ${ctxRows(it.after, it.recording_id)}
       <div class="sub" style="margin-top:12px">кто говорит?</div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">
         ${d.people.map((n, i) => `<button class="act" data-act="bname" data-name="${esc(n)}">${hot(i)}${esc(n)}</button>`).join('')}
@@ -1609,7 +1635,13 @@ document.addEventListener('keydown', e => {
     play({src: recSrc(it.recording_id), start: it.start_sec, end: it.end_sec, title: 'бенчмарк'}); return; }
   if (e.key >= '1' && e.key <= '9'){ const n = BENCH.people[+e.key - 1]; if (n) benchLabel(n); return; }
   const k = e.key.toLowerCase();
-  if (k === 'n') benchLabel('?');
+  if (k === 'k'){
+    const b = (it.before || []), a2 = (it.after || []);
+    play({src: recSrc(it.recording_id), title: 'бенчмарк с контекстом',
+          start: b.length ? b[0].start_sec : it.start_sec,
+          end: a2.length ? a2[a2.length - 1].end_sec : it.end_sec});
+  }
+  else if (k === 'n') benchLabel('?');
   else if (k === 's') benchLabel('[stranger]');
   else if (k === 'x') benchLabel('[noise]');
   else if (k === 'c') document.querySelector('input[name="bcond"][value="clean"]').checked = true;
@@ -2412,6 +2444,8 @@ document.addEventListener('click', async e => {
       }
       else if (a === 'bplay') play({src: recSrc(b.dataset.rid), btn: b,
         start: +b.dataset.start, end: +b.dataset.end, title: 'бенчмарк'});
+      else if (a === 'bplayctx') play({src: recSrc(b.dataset.rid), btn: b,
+        start: +b.dataset.start, end: +b.dataset.end, title: 'бенчмарк с контекстом'});
       else if (a === 'bname') await benchLabel(b.dataset.name);
       else if (a === 'bnewgo'){
         const nm = (b.closest('.card').querySelector('[data-role="bnew"]').value || '').trim();

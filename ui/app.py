@@ -964,11 +964,31 @@ def benchmark_next():
     if row is None:
         return {"item": None, "done": done, "total": total, "skipped": skipped}
     people = [r["name"] for r in q("SELECT name FROM speakers ORDER BY name")]
-    # подсказку кандидатов НЕ показываем — она сместила бы ответ; людей даём по алфавиту
+
+    # Соседние реплики: без них половина фрагментов неразличима — по одной фразе
+    # не понять, кто с кем говорит. Имена соседей это ДОГАДКА системы, а не истина;
+    # в интерфейсе они помечены как предположение, чтобы не смещать ответ.
+    def around(before: bool):
+        # Сам фрагмент исключаем по id, а не по времени: start_sec это real, при
+        # расширении до float8 значение меняется в последнем знаке, и реплика
+        # оказывается «меньше самой себя» — попадала в собственных соседей.
+        cmp_, order = ("<=", "DESC") if before else (">=", "ASC")
+        rows = q(f"""SELECT start_sec, end_sec, text, speaker_name, confidence
+                       FROM segments
+                      WHERE recording_id = %s AND id <> %s
+                        AND start_sec {cmp_} %s AND text <> ''
+                      ORDER BY start_sec {order} LIMIT 5""",
+                 (row["recording_id"], row["id"], row["start_sec"]))
+        return list(reversed(rows)) if before else rows
+
+    rec = q1("SELECT coalesce(title, filename) AS title, started_at FROM recordings WHERE id = %s",
+             (row["recording_id"],))
     return {"item": {"segment_id": row["id"], "recording_id": row["recording_id"],
                      "start_sec": row["start_sec"], "end_sec": row["end_sec"],
                      "text": row["text"], "dur_bucket": row["dur_bucket"],
-                     "noise_hint": row["noise_hint"], "why": row["why"], "ord": row["ord"]},
+                     "noise_hint": row["noise_hint"], "why": row["why"], "ord": row["ord"],
+                     "rec_title": (rec or {}).get("title"),
+                     "before": around(True), "after": around(False)},
             "people": people, "done": done, "total": total, "skipped": skipped}
 
 
