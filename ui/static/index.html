@@ -163,6 +163,15 @@ button.act.cand{font-size:11px;padding:2px 7px}
 
 kbd{display:inline-block;border:1px solid var(--border);border-radius:4px;padding:0 5px;font-size:11px;
   color:var(--dim);background:var(--panel);margin-right:2px}
+
+/* Условия записи — не мелкая галочка, а решение наравне с выбором человека:
+   по этой метке потом видно, теряется точность на шуме или везде. */
+.condbox{display:flex;gap:12px;margin-top:8px}
+.condbox label{flex:1;display:flex;gap:12px;align-items:center;padding:14px 18px;font-size:15px;
+  border:2px solid var(--border);border-radius:10px;cursor:pointer;transition:.12s}
+.condbox label:hover{border-color:var(--dim)}
+.condbox label:has(input:checked){border-color:var(--acc);background:var(--panel2)}
+.condbox input{width:20px;height:20px;flex:none;accent-color:var(--acc);cursor:pointer}
 </style>
 </head>
 <body>
@@ -1605,11 +1614,16 @@ async function loadBench(){
         <button class="act" data-act="bname" data-name="[skip]"
           title="Пропустить: не помню, кто это, или разбираться не хочу. Фрагмент уходит из очереди и в оценке не участвует."><kbd>0</kbd> пропустить →</button>
       </div>
-      <div class="sub" style="margin-top:12px">условия записи (по уверенности распознавания я предположил:
-        <b>${cond === 'noisy' ? 'шумно' : 'чисто'}</b> — поправь, если не так)</div>
-      <div style="display:flex;gap:12px;margin-top:4px">
-        <label class="chk"><input type="radio" name="bcond" value="clean" ${cond === 'clean' ? 'checked' : ''}> <kbd>C</kbd> чисто: рядом, тихо, разборчиво</label>
-        <label class="chk"><input type="radio" name="bcond" value="noisy" ${cond === 'noisy' ? 'checked' : ''}> <kbd>D</kbd> шумно: далеко, улица, застолье, перебивают</label>
+      <div style="margin-top:16px;font-size:14px">
+        <b>Условия записи</b> — по ним будет видно, где система ошибается: на чистом звуке
+        или только на шуме. <span class="dim">Я предположил
+        «${cond === 'noisy' ? 'шумно' : 'чисто'}» по уверенности распознавания — поправь, если не так.</span>
+      </div>
+      <div class="condbox">
+        <label><input type="radio" name="bcond" value="clean" ${cond === 'clean' ? 'checked' : ''}>
+          <span><b><kbd>C</kbd> Чисто</b><br><span class="dim">рядом, тихо, слышно каждое слово</span></span></label>
+        <label><input type="radio" name="bcond" value="noisy" ${cond === 'noisy' ? 'checked' : ''}>
+          <span><b><kbd>D</kbd> Шумно</b><br><span class="dim">далеко, улица, застолье, перебивают, музыка</span></span></label>
       </div>
       <div class="eres sub" style="margin-top:8px"></div>
     </div>`;
