@@ -185,11 +185,20 @@ def stage_resolve(rec_id: int, src: Path, utts: list) -> dict:
     """Локальное опознание + текст-судья по конфликтам."""
     job = db.job_start(rec_id, "resolve")
     try:
-        base = embed_mod.known_speakers()
-        # порог склейки, выбранный руками в UI, перекрывает автоподбор
         meta = db.q1("SELECT meta FROM recordings WHERE id=%s", rec_id)[0] or {}
         if isinstance(meta, str):
             meta = json.loads(meta)
+
+        base = embed_mod.known_speakers()
+        # Запись можно попросить опознавать ТОЛЬКО названных людей: на чужой встрече
+        # половина участников в базе отсутствует, и полная база лишь навешивает им
+        # чужие имена. Остальные тогда честно останутся S1, S2 и так далее.
+        only = meta.get("only_speakers")
+        if only:
+            base = {k: v for k, v in base.items() if k in set(only)}
+            log(f"опознаём только: {sorted(base) or 'никого — база пуста'}")
+
+        # порог склейки, выбранный руками в UI, перекрывает автоподбор
         forced = meta.get("join")
         info = diarize.assign_speakers(utts, src, base, float(forced) if forced else None)
         amb_before = sum(1 for u in utts if u.ambiguous)

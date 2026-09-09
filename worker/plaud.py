@@ -44,13 +44,27 @@ def access_token() -> str:
     t = _load()
     # expires_at в миллисекундах; обновляем заранее, с запасом в минуту
     if int(t.get("expires_at", 0)) - 60_000 < int(time.time() * 1000):
+        # Ровно как официальный CLI: тело form-urlencoded, а не JSON. С JSON сервер
+        # отвечал 422 «refresh_token: field required» — обновление не срабатывало ни
+        # разу с момента логина, и через пять дней облако молча перестало отдавать
+        # список записей.
         r = _client.post(f"{API}/oauth/third-party/access-token/refresh",
-                         json={"refresh_token": t["refresh_token"]})
-        r.raise_for_status()
+                         data={"refresh_token": t["refresh_token"]},
+                         headers={"Accept": "application/json"})
+        if r.status_code >= 400:
+            raise RuntimeError(
+                f"Plaud не обновил токен ({r.status_code}): {r.text[:200]} — "
+                f"скорее всего, истёк refresh_token, нужен `plaud login` на хосте")
         data = r.json()
         fresh = data.get("data") or data
-        t = {**t, **{k: fresh[k] for k in ("access_token", "refresh_token", "expires_at")
-                     if k in fresh}}
+        # в ответе expires_in (секунды), а не expires_at; refresh_token может не прийти —
+        # тогда остаётся прежний
+        t = {**t,
+             "access_token": fresh["access_token"],
+             "refresh_token": fresh.get("refresh_token") or t["refresh_token"],
+             "token_type": fresh.get("token_type") or t.get("token_type", "Bearer"),
+             "expires_at": int(time.time() * 1000 + int(fresh["expires_in"]) * 1000)
+             if fresh.get("expires_in") else int(fresh.get("expires_at") or 0)}
         _save(t)
     return t["access_token"]
 
